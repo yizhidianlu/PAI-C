@@ -208,6 +208,44 @@ def _check_arxiv_pacing(cfg: Config) -> Check:
     return Check("arxiv pacing", "ok", " | ".join(parts))
 
 
+def _check_overleaf(cfg: Config) -> Check:
+    """Surface the Overleaf bidirectional sync status.
+
+    Reports enabled/disabled and whether the configured Dropbox target_root
+    actually exists locally. Missing target_root just means the user hasn't
+    connected Dropbox in Overleaf yet — the SKILL silently skips when this
+    is the case, so this is a hint not an error.
+    """
+    overleaf = cfg.overleaf
+    if not overleaf.enabled:
+        return Check(
+            "overleaf sync",
+            "skip",
+            "disabled (set overleaf.enabled=true in ~/.paic/config.yaml to enable "
+            "bidirectional sync via Dropbox)",
+        )
+    target_root = overleaf.target_root.expanduser()
+    if not target_root.exists():
+        return Check(
+            "overleaf sync",
+            "warn",
+            (
+                f"enabled=true | target_root={target_root} (missing) — open Overleaf "
+                "→ Account Settings → Linked Accounts → connect Dropbox; the folder "
+                "is auto-created on first connect"
+            ),
+        )
+    return Check(
+        "overleaf sync",
+        "ok",
+        (
+            f"enabled=true | target_root={target_root} | "
+            f"strategy={overleaf.conflict_strategy} | "
+            f"prompt_on_delete={overleaf.prompt_on_delete}"
+        ),
+    )
+
+
 def _check_external_search(cfg: Config) -> Check:
     """Surface the multi-platform search status — §18.
 
@@ -433,6 +471,7 @@ def run_all(*, probe_sdk: bool = False) -> list[Check]:
     checks.append(_check_arxiv_pacing(cfg))
     checks.append(_check_external_search(cfg))
     checks.extend(_check_external_search_credentials(cfg))
+    checks.append(_check_overleaf(cfg))
     checks.append(_check_semantic_scholar(cfg))
     checks.append(_check_routing(cfg))
     checks.append(_check_panel_routing_diversity(cfg))

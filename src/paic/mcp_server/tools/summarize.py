@@ -229,14 +229,31 @@ def summarize_run(
         body = None
         text_source = "local_markdown"
 
-    # §25: fall back to project-local archive (library/pdfs/<cite_key>.{md,pdf})
-    # for non-arxiv papers (PubMed / bioRxiv / OpenAlex / …) that ingest
-    # downloaded via paper-search-mcp.
+    # §25: fall back to project-local archive (library/pdfs/<filename>) for
+    # non-arxiv papers (PubMed / bioRxiv / OpenAlex / …) that ingest downloaded
+    # via paper-search-mcp.
+    #
+    # Filename resolution: prefer ``ref.pdf_local_path`` (set by ingest when it
+    # uses the human-readable ``NNN_title`` naming scheme); fall back to the
+    # legacy ``<cite_key>.{md,pdf}`` for libraries from before that change.
     if body is None:
         pdfs_dir = paths.pdfs_dir
 
-        md_path = pdfs_dir / f"{cite_key}.md"
-        pdf_path = pdfs_dir / f"{cite_key}.pdf"
+        explicit_name = ref.pdf_local_path
+        if explicit_name:
+            primary = pdfs_dir / explicit_name
+            if primary.suffix.lower() == ".md":
+                md_path = primary
+                pdf_path = pdfs_dir / f"{cite_key}.pdf"
+            elif primary.suffix.lower() == ".pdf":
+                md_path = pdfs_dir / f"{cite_key}.md"
+                pdf_path = primary
+            else:
+                md_path = pdfs_dir / f"{cite_key}.md"
+                pdf_path = pdfs_dir / f"{cite_key}.pdf"
+        else:
+            md_path = pdfs_dir / f"{cite_key}.md"
+            pdf_path = pdfs_dir / f"{cite_key}.pdf"
 
         if md_path.is_file():
             try:

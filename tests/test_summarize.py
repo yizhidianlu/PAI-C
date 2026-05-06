@@ -371,6 +371,41 @@ def test_legacy_summary_filename_still_hits_cache(project, monkeypatch):
     assert "2401.12345.md" in out["summary_path"]
 
 
+def test_summarize_reads_pdf_local_path_from_selected_yaml(doi_project, monkeypatch):
+    """When selected.yaml entry has pdf_local_path, summarize reads from
+    that filename, not from <cite_key>.<ext>. Covers ingest's new
+    NNN_title naming scheme."""
+    from paic.workspace.store import load_yaml, save_yaml
+
+    monkeypatch.setattr(
+        "paic.mcp_server.tools.summarize.read_local_markdown",
+        lambda paper_id, cfg=None: None,
+    )
+
+    # Write the file under the new human-readable name
+    pdfs_dir = doi_project / ".paic/library/pdfs"
+    pdfs_dir.mkdir(parents=True, exist_ok=True)
+    (pdfs_dir / "001_frontiers_neuroscience_sample.md").write_text(
+        "# Sample\n\nProject body via NNN_title naming.",
+        encoding="utf-8",
+    )
+    # Note: deliberately DON'T create <cite_key>.md — proves the resolver
+    # actually used pdf_local_path.
+
+    selected_path = doi_project / ".paic/library/selected.yaml"
+    selected = load_yaml(selected_path)
+    selected["papers"][0]["pdf_local_path"] = "001_frontiers_neuroscience_sample.md"
+    save_yaml(selected_path, selected)
+
+    out = summarize_run(
+        str(doi_project),
+        "10.3389/fnins.2023.1276067",
+        llm=_StubLLM(_SummaryFields(problem="P", method="M")),
+    )
+    assert "error" not in out, out
+    assert out["text_source"] == "library_pdfs_md"
+
+
 def test_persist_uses_cite_key_filename(doi_project):
     """summarize_persist (host-orchestration write path) also keys on cite_key."""
     from paic.mcp_server.tools.summarize import summarize_persist

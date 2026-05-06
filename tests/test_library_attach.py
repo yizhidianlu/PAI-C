@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from paic.mcp_server.tools.attach import library_attach_paper_tool
+from paic.mcp_server.tools.library import library_add_tool
 from paic.mcp_server.tools.workspace import workspace_init
+from paic.workspace.store import load_yaml
 
 
 @pytest.fixture
@@ -171,3 +173,105 @@ def test_attach_no_source_path_no_arxiv_id_errors(project):
     out = library_attach_paper_tool(str(project), paper)
     assert out["error"] == "source_not_found"
     assert "no source_path" in out["detail"]
+
+
+# ---------------------------------------------------------- display_name path
+def test_attach_with_display_name_writes_pdf_local_path(project, tmp_path):
+    """When the SKILL passes display_name, the file is named that way and
+    selected.yaml's matching entry gets pdf_local_path written back."""
+    paper = {"arxiv_id": "2401.12345", "title": "Foundational Paper"}
+    library_add_tool(str(project), [paper])
+
+    fake = tmp_path / "raw.md"
+    fake.write_text("# body", encoding="utf-8")
+
+    out = library_attach_paper_tool(
+        str(project),
+        paper,
+        source_path=str(fake),
+        display_name="001_foundational_paper.md",
+    )
+
+    assert out.get("error") is None, out
+    assert out["copied"] is True
+    assert Path(out["dest_path"]).name == "001_foundational_paper.md"
+    assert out["pdf_local_path"] == "001_foundational_paper.md"
+
+    selected = load_yaml(Path(project) / ".paic/library/selected.yaml")
+    entries = selected["papers"]
+    matching = [r for r in entries if r.get("arxiv_id") == "2401.12345"]
+    assert len(matching) == 1
+    assert matching[0]["pdf_local_path"] == "001_foundational_paper.md"
+
+
+def test_attach_without_display_name_does_not_touch_yaml(project, tmp_path):
+    """Legacy contract: no display_name → no pdf_local_path written."""
+    paper = {"arxiv_id": "2401.12345", "title": "Foundational Paper"}
+    library_add_tool(str(project), [paper])
+
+    out = library_attach_paper_tool(str(project), paper)
+    assert out["copied"] is True
+    assert "pdf_local_path" not in out  # not in return shape
+
+    selected = load_yaml(Path(project) / ".paic/library/selected.yaml")
+    entry = next(r for r in selected["papers"] if r.get("arxiv_id") == "2401.12345")
+    assert entry.get("pdf_local_path") is None
+
+
+def test_attach_display_name_already_exists_still_writes_yaml(project, tmp_path):
+    """Idempotent re-run: dest already exists, but pdf_local_path must still
+    end up in selected.yaml (covers manual user attach + later re-ingest)."""
+    paper = {"arxiv_id": "2401.12345", "title": "Foundational Paper"}
+    library_add_tool(str(project), [paper])
+
+    # Pre-create the destination file (simulating a manual drop)
+    dest_dir = Path(project) / ".paic/library/pdfs"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / "001_foundational_paper.md").write_text("manual", encoding="utf-8")
+
+    fake = tmp_path / "raw.md"
+    fake.write_text("# body", encoding="utf-8")
+
+    out = library_attach_paper_tool(
+        str(project),
+        paper,
+        source_path=str(fake),
+        display_name="001_foundational_paper.md",
+    )
+
+    assert out["copied"] is False
+    assert out["reason"] == "already_exists"
+    assert out["pdf_local_path"] == "001_foundational_paper.md"
+
+    selected = load_yaml(Path(project) / ".paic/library/selected.yaml")
+    entry = next(r for r in selected["papers"] if r.get("arxiv_id") == "2401.12345")
+    assert entry["pdf_local_path"] == "001_foundational_paper.md"
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "../escape.pdf",
+        "subdir/file.pdf",
+        "back\\slash.pdf",
+        "",
+        "spaces in name.pdf",
+        "x" * 201,
+    ],
+)
+def test_attach_display_name_sanitization_rejects_unsafe(project, tmp_path, bad_name):
+    """Reject path traversal / separators / spaces / oversize names."""
+    fake = tmp_path / "raw.md"
+    fake.write_bytes(b"x")
+
+    out = library_attach_paper_tool(
+        str(project),
+        {"arxiv_id": "2401.12345"},
+        source_path=str(fake),
+        display_name=bad_name,
+    )
+    assert out["error"] == "invalid_display_name"
+    # No file was produced under the bad name
+    pdfs = Path(project) / ".paic/library/pdfs"
+    if pdfs.exists():
+        assert all("escape" not in f.name and "subdir" not in f.name for f in pdfs.iterdir())

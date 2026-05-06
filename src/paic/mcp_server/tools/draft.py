@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from paic.config import load_config
 from paic.latex.compose import (
     VALID_MODES as COMPOSE_VALID_MODES,
 )
@@ -18,6 +19,7 @@ from paic.latex.compose import (
     persist_composed,
 )
 from paic.latex.filler import fill_draft
+from paic.latex.overleaf_sync import mirror_drafts_to_overleaf
 from paic.latex.polish import (
     VALID_MODES,
     persist_polished,
@@ -403,4 +405,53 @@ def draft_compose_persist_tool(
         section=section,
         composed=composed,
         original_hash=original_hash,
+    )
+
+
+def draft_sync_overleaf_tool(
+    project_dir: str,
+    target_dir: str | None = None,
+    direction: str = "auto",
+    dry_run: bool = False,
+    conflict_strategy: str | None = None,
+    confirm_deletions: bool = False,
+) -> dict[str, Any]:
+    """Bidirectional sync between drafts/ and the Overleaf-linked Dropbox folder.
+
+    Standard flow: SKILL calls once with ``dry_run=True`` to preview
+    pushed/pulled/conflicts/deletions_pending, asks the user, then calls a
+    second time without dry_run (and with ``confirm_deletions=True`` if the
+    user authorized propagating any unilateral deletes).
+
+    See :func:`paic.latex.overleaf_sync.mirror_drafts_to_overleaf` for the
+    full state machine and conflict-resolution semantics.
+    """
+    paths = resolve_project(project_dir)
+    if not paths.paic_dir.exists():
+        return {"error": "project_not_initialized", "project_dir": str(paths.root)}
+
+    if direction not in ("auto", "push_only", "pull_only"):
+        return {
+            "error": "invalid_direction",
+            "got": direction,
+            "valid": ["auto", "push_only", "pull_only"],
+        }
+    if conflict_strategy is not None and conflict_strategy not in (
+        "keep_both", "local_wins", "remote_wins", "newer_wins"
+    ):
+        return {
+            "error": "invalid_conflict_strategy",
+            "got": conflict_strategy,
+            "valid": ["keep_both", "local_wins", "remote_wins", "newer_wins"],
+        }
+
+    cfg = load_config()
+    return mirror_drafts_to_overleaf(
+        paths,
+        cfg.overleaf,
+        target_dir=target_dir,
+        direction=direction,  # type: ignore[arg-type]
+        dry_run=dry_run,
+        conflict_strategy=conflict_strategy,  # type: ignore[arg-type]
+        confirm_deletions=confirm_deletions,
     )

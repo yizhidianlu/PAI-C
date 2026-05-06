@@ -145,6 +145,48 @@ providers:
 
 
 # --------------------------------------------------------------------------
+#  Overleaf 双向同步（可选）— /paic-draft 跑完后调 paic_draft_sync_overleaf
+# --------------------------------------------------------------------------
+#
+# 机制：Overleaf 后台 Account Settings → Linked Accounts 连一次 Dropbox，
+# Overleaf 会在用户 Dropbox 自动创建 ~/Dropbox/Apps/Overleaf/，每个子目录
+# 对应一个 Overleaf project。PAI-C 把 <project>/.paic/drafts/ 镜像到对应
+# 子目录、并把 Overleaf 端的改动拉回来——通过 baseline manifest（位于
+# <project>/.paic/state/overleaf_sync.yaml）三方 merge。免 API key、免
+# Overleaf Premium git integration。
+#
+# 默认 enabled=true 仅启用功能：每次同步前 SKILL 仍会问用户；target_root
+# 不存在时（用户没连 Dropbox）SKILL 静默跳过。
+#
+overleaf:
+  enabled: true                                # false → SKILL 默认跳过询问；paic doctor 也不查
+  target_root: ~/Dropbox/Apps/Overleaf         # Dropbox sync 根目录（Overleaf 后台连 Dropbox 后自动创建）
+  project_subdir: null                         # null = 用 PAI-C 项目目录的 basename；指定则覆盖
+                                               # （用于一份 PAI-C 项目对应不同 Overleaf project 的场景）
+  conflict_strategy: keep_both                 # keep_both | local_wins | remote_wins | newer_wins
+                                               # keep_both：本地保留原状，remote 版被拉到本地为
+                                               #   <name>.overleaf-conflict.<UTC>.<ext>，让用户手动 merge
+                                               # local_wins / remote_wins：一边覆盖另一边（吞改动）
+                                               # newer_wins：按 mtime（跨 OS / Dropbox 客户端可能不准）
+  prompt_on_delete: true                       # true（默认）= 单边删除进 deletions_pending、SKILL 询问后才传播
+                                               # false = 永不传播删除（最保守）
+  ignore_patterns:                             # fnmatch 通配；匹配则不进 sync 也不进 baseline
+    - "*.pdf"                                  # 编译产物
+    - "*.aux"
+    - "*.log"
+    - "*.out"
+    - "*.bbl"
+    - "*.blg"
+    - "*.synctex.gz"
+    - "*.toc"
+    - "*.nav"
+    - "*.snm"
+    - "*.bak.*"                                # paic-draft polish 留下的 .bak.<UTC>
+    - ".DS_Store"
+    - "Thumbs.db"
+
+
+# --------------------------------------------------------------------------
 #  Routing — 把节点分发到 backend
 # --------------------------------------------------------------------------
 #

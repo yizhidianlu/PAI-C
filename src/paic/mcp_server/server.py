@@ -151,29 +151,42 @@ def paic_library_attach_paper(
     project_dir: str,
     paper: dict[str, Any],
     source_path: str | None = None,
+    display_name: str | None = None,
 ) -> dict[str, Any]:
-    """Copy a downloaded paper into ``<project>/.paic/library/pdfs/<cite_key>.<ext>`` (§24).
+    """Copy a downloaded paper into ``<project>/.paic/library/pdfs/`` (§24).
 
     Two modes:
 
     - **arxiv auto-locate** (when ``source_path`` is None and ``paper`` has
       ``arxiv_id``): finds the markdown via the configured arxiv MCP storage
-      paths and copies it to ``library/pdfs/<cite_key>.md``.
-    - **explicit source** (when ``source_path`` is given): copies that file
-      to ``library/pdfs/<cite_key>.<ext>``, where ``<ext>`` comes from the
-      source's suffix.
+      paths and copies it.
+    - **explicit source** (when ``source_path`` is given): copies that file,
+      taking ``<ext>`` from the source's suffix.
+
+    Filename:
+
+    - ``display_name=None`` (default) → ``<cite_key>.<ext>`` (legacy slug).
+    - ``display_name="NNN_title.pdf"`` → uses the supplied filename verbatim
+      (sanitized to ``[A-Za-z0-9._-]+``, ≤200 chars). On success, writes
+      the filename back into ``selected.yaml`` as ``pdf_local_path`` so
+      summarize / draft can locate the file without re-deriving it.
 
     Idempotent — skips silently if the destination already exists. The SKILL
     layer normally calls this only for arxiv ingest (paper-search-mcp's
     download tools accept ``save_path`` directly, so they write to the
-    project-local path without needing a separate attach step).
+    project-local path without needing a separate attach step) and for
+    post-rename re-attach in step 3.2 to record the final ``pdf_local_path``.
 
-    Returns ``{cite_key, dest_path, copied, ext, source_path}`` on success
-    or an ``error`` dict (``project_not_initialized`` / ``cannot_derive_cite_key`` /
-    ``source_not_found`` / ``copy_failed``).
+    Returns ``{cite_key, dest_path, copied, ext, source_path, pdf_local_path?}``
+    on success or an ``error`` dict (``project_not_initialized`` /
+    ``cannot_derive_cite_key`` / ``source_not_found`` / ``copy_failed`` /
+    ``invalid_display_name``).
     """
     return attach_tools.library_attach_paper_tool(
-        project_dir, paper, source_path=source_path
+        project_dir,
+        paper,
+        source_path=source_path,
+        display_name=display_name,
     )
 
 
@@ -657,6 +670,52 @@ def paic_draft_compose_persist(
     """
     return draft_tools.draft_compose_persist_tool(
         project_dir, section, composed, original_hash
+    )
+
+
+@mcp.tool()
+def paic_draft_sync_overleaf(
+    project_dir: str,
+    target_dir: str | None = None,
+    direction: str = "auto",
+    dry_run: bool = False,
+    conflict_strategy: str | None = None,
+    confirm_deletions: bool = False,
+) -> dict[str, Any]:
+    """Bidirectional sync between drafts/ and an Overleaf-linked Dropbox folder.
+
+    Mechanism: Overleaf's account-level Dropbox integration creates
+    ``~/Dropbox/Apps/Overleaf/`` and maps each subdirectory to one Overleaf
+    project (no API key required). PAI-C mirrors ``<project>/.paic/drafts/``
+    into the matching subdirectory and pulls Overleaf-side edits back via
+    three-way merge against a baseline manifest at
+    ``<project>/.paic/state/overleaf_sync.yaml``.
+
+    Standard SKILL flow: call once with ``dry_run=True`` to preview the plan
+    (pushed / pulled / conflicts / deletions_pending), present to the user,
+    then call again without dry_run — passing ``confirm_deletions=True`` if
+    the user authorized propagating any unilateral deletes.
+
+    ``direction``: ``auto`` (default; both push and pull) | ``push_only`` |
+    ``pull_only``. ``conflict_strategy``: ``keep_both`` (default; remote
+    version pulled into local tree as ``<name>.overleaf-conflict.<UTC>.<ext>``,
+    local pushed back) | ``local_wins`` | ``remote_wins`` | ``newer_wins``.
+    Both override the values from ``~/.paic/config.yaml`` overleaf section.
+
+    Returns ``{target_dir, pushed[], pulled[], conflicts[], deletions_pending[],
+    deletions_propagated[], ignored, dry_run, baseline_at, conflict_strategy,
+    direction}`` on success, or ``{"error": "<reason>", "hint": "..."}`` on
+    hard failures (``overleaf_disabled`` / ``drafts_dir_not_found`` /
+    ``overleaf_target_root_missing`` / ``invalid_direction`` /
+    ``invalid_conflict_strategy``).
+    """
+    return draft_tools.draft_sync_overleaf_tool(
+        project_dir,
+        target_dir=target_dir,
+        direction=direction,
+        dry_run=dry_run,
+        conflict_strategy=conflict_strategy,
+        confirm_deletions=confirm_deletions,
     )
 
 

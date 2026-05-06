@@ -19,6 +19,7 @@ LaTeX bibliography (``arxiv_<id>``, ``doi_<slug>``, ``s2_<id>``, …) so a
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,12 @@ from paic.config import load_config
 from paic.latex.filler import _cite_key
 from paic.sources.arxiv_bridge import find_local_markdown
 from paic.workspace.paths import resolve_project
+from paic.workspace.store import load_yaml, save_yaml
+
+# Allow alphanumerics, dot, underscore, hyphen — covers the ``NNN_title.ext``
+# pattern emitted by the ingest skill while rejecting path traversal,
+# directory separators, and control characters.
+_DISPLAY_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _has_any_identifier(paper: dict[str, Any]) -> bool:
@@ -36,6 +43,44 @@ def _has_any_identifier(paper: dict[str, Any]) -> bool:
         or paper.get("s2_id")
         or paper.get("title")
     )
+
+
+def _sanitize_display_name(name: str) -> str | None:
+    """Validate a SKILL-supplied display filename. Returns the name if safe,
+    else ``None``. The caller treats ``None`` as a hard error — we never
+    silently coerce a malformed name into something else, because that would
+    make ingest's filename audit unverifiable from the call site.
+    """
+    if not name or len(name) > 200:
+        return None
+    if ".." in name:
+        return None
+    if not _DISPLAY_NAME_RE.match(name):
+        return None
+    return name
+
+
+def _persist_pdf_local_path(paths, cite_key: str, filename: str) -> bool:
+    """Idempotently write ``pdf_local_path = filename`` into the selected.yaml
+    entry whose cite_key matches. Returns True if the file was rewritten,
+    False if no matching entry exists (paper not yet registered) or the
+    field already had the correct value.
+    """
+    selected = load_yaml(paths.selected_yaml) or {}
+    if not isinstance(selected, dict):
+        return False
+    papers = selected.get("papers") or []
+    for record in papers:
+        if not isinstance(record, dict):
+            continue
+        if _cite_key(record) == cite_key:
+            if record.get("pdf_local_path") == filename:
+                return False
+            record["pdf_local_path"] = filename
+            selected["papers"] = papers
+            save_yaml(paths.selected_yaml, selected)
+            return True
+    return False
 
 
 def _ext_for(paper: dict[str, Any], source_path: Path | None) -> str:
@@ -59,8 +104,9 @@ def library_attach_paper_tool(
     project_dir: str,
     paper: dict[str, Any],
     source_path: str | None = None,
+    display_name: str | None = None,
 ) -> dict[str, Any]:
-    """Copy a downloaded paper into ``<project>/.paic/library/pdfs/<cite_key>.<ext>``.
+    """Copy a downloaded paper into ``<project>/.paic/library/pdfs/``.
 
     Two modes:
 
@@ -70,8 +116,17 @@ def library_attach_paper_tool(
        an ``arxiv_id``: we use ``arxiv_bridge.find_local_markdown`` to
        resolve the upstream markdown and copy it.
 
+    Filename resolution:
+
+    - Default (``display_name=None``) → ``<cite_key>.<ext>`` (the legacy
+      BibTeX-aligned slug, kept for backward compatibility).
+    - ``display_name="<safe_filename>"`` → the supplied filename is used
+      verbatim (after sanitization). On success we write the filename
+      back into ``selected.yaml`` as ``pdf_local_path`` so downstream
+      summarize / draft can find the PDF without re-deriving it.
+
     Skips silently (``copied=False``) if the destination already exists.
-    Returns ``{cite_key, dest_path, copied, ext, source_path, found}``
+    Returns ``{cite_key, dest_path, copied, ext, source_path, pdf_local_path}``
     on success or an ``error`` dict on failure.
     """
     paths = resolve_project(project_dir)
@@ -124,10 +179,27 @@ def library_attach_paper_tool(
 
     ext = _ext_for(paper, src)
     paths.pdfs_dir.mkdir(parents=True, exist_ok=True)
-    dest = paths.pdfs_dir / f"{cite_key}{ext}"
+
+    final_filename: str | None = None
+    if display_name is not None:
+        sanitized = _sanitize_display_name(display_name)
+        if sanitized is None:
+            return {
+                "error": "invalid_display_name",
+                "detail": (
+                    "display_name must contain only [A-Za-z0-9._-], be "
+                    "non-empty, ≤200 chars, and not contain '..' — got "
+                    f"{display_name!r}."
+                ),
+                "cite_key": cite_key,
+            }
+        final_filename = sanitized
+        dest = paths.pdfs_dir / sanitized
+    else:
+        dest = paths.pdfs_dir / f"{cite_key}{ext}"
 
     if dest.exists():
-        return {
+        result: dict[str, Any] = {
             "cite_key": cite_key,
             "dest_path": str(dest),
             "copied": False,
@@ -135,6 +207,10 @@ def library_attach_paper_tool(
             "ext": ext,
             "source_path": str(src),
         }
+        if final_filename is not None:
+            _persist_pdf_local_path(paths, cite_key, final_filename)
+            result["pdf_local_path"] = final_filename
+        return result
 
     try:
         shutil.copyfile(src, dest)
@@ -147,10 +223,14 @@ def library_attach_paper_tool(
             "dest_path": str(dest),
         }
 
-    return {
+    result = {
         "cite_key": cite_key,
         "dest_path": str(dest),
         "copied": True,
         "ext": ext,
         "source_path": str(src),
     }
+    if final_filename is not None:
+        _persist_pdf_local_path(paths, cite_key, final_filename)
+        result["pdf_local_path"] = final_filename
+    return result

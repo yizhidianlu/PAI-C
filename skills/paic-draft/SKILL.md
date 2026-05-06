@@ -1,7 +1,7 @@
 ---
 name: paic-draft
-description: LaTeX writing — v0.1 fills a venue template (built-in cvpr/neurips/ieee, or any project-local template under .paic/templates/); v0.2 polishes individual sections via LLM rewrite (tighten / clarify / formalize / expand / proofread); v0.3 composes full sections from idea + experiment + library with auto citation alignment. Use when the user says "起 LaTeX 骨架" / "draft the paper" / "改一下 intro" / "compose 一段 related work".
-allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_workspace_status
+description: LaTeX writing — v0.1 fills a venue template (built-in cvpr/neurips/ieee, or any project-local template under .paic/templates/); v0.2 polishes individual sections via LLM rewrite (tighten / clarify / formalize / expand / proofread); v0.3 composes full sections from idea + experiment + library with auto citation alignment. Optionally syncs the resulting drafts/ tree bidirectionally with an Overleaf-linked Dropbox folder. Use when the user says "起 LaTeX 骨架" / "draft the paper" / "改一下 intro" / "compose 一段 related work".
+allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_draft_sync_overleaf, mcp__paic__paic_workspace_status
 ---
 
 # /paic-draft — LaTeX writing
@@ -210,6 +210,107 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
 - `error: template_already_exists`（来自 scaffold）→ 提示用户换名字或先 `rm -rf .paic/templates/<name>`。
 - `error: unknown_base`（来自 scaffold）→ 显示 available 内置模板列表（cvpr/neurips/ieee）。
 
+## Optional: bidirectional sync with Overleaf via Dropbox
+
+每次 fill / polish / compose 跑完都可以问用户是否要同步 `<project>/.paic/drafts/`
+↔ Overleaf。前置：用户在 **Overleaf 后台 Account Settings → Linked Accounts** 连
+过一次 Dropbox（免 API key、免 Premium git integration），本地有
+`~/Dropbox/Apps/Overleaf/` 文件夹（首次连接时由 Overleaf 自动创建）。
+
+机制是三方 merge——baseline manifest 存于 `<project>/.paic/state/overleaf_sync.yaml`，
+同时比对本地 / Overleaf 两端的 sha256，区分谁动了什么、解决冲突。
+
+### 何时问
+
+- fill 完 → 「首次同步建立 Overleaf project」（本地 → Overleaf 单向 push 为主）
+- polish 完 → 「推 section 改动 + 拉 Overleaf 端的手动修正」
+- compose 完 → 同上
+
+不强制每次都问；如果用户当前阶段并不关心 Overleaf 渲染，可以跳过。
+
+### 标准两步流程
+
+**Step 1：dry_run 看变化**
+
+调 `mcp__paic__paic_draft_sync_overleaf(project_dir=<cwd>, dry_run=true)`。
+
+按返回路由：
+
+- `error: overleaf_disabled` → silently skip（用户在 yaml 里关掉了）。
+- `error: overleaf_target_root_missing` → silently skip + 一句中文小提示「未检测到 `~/Dropbox/Apps/Overleaf/`，跳过同步。要启用，去 Overleaf 后台 Account Settings → Linked Accounts → connect Dropbox」。
+- `error: drafts_dir_not_found` → 提示先 `/paic-draft fill`。
+- 成功（含 `pushed` / `pulled` / `conflicts` / `deletions_pending` 四个列表）→ 进 step 2。
+
+**Step 2：呈现给用户 + 询问**
+
+按四种情形分别处理：
+
+a. 全部 unchanged（四个列表都为空）→ 一句中文「无变化，无需同步」→ 结束。
+
+b. 只有 `pushed` / `pulled`、无冲突、无 deletions_pending：
+   ```
+   将 push N 篇到 Overleaf、pull M 篇到本地，无冲突。要执行吗？(y/n，默认 n)
+   ```
+   用户 y → 进 step 3。
+
+c. 有 `conflicts` 或 `deletions_pending`：详细列出每条 + 处理方案给用户：
+   ```
+   冲突 K 个：
+     - sections/01_intro.tex（双方都改过且不同）
+       策略 keep_both：本地保留原状；remote 版本将拉到本地为
+       sections/01_intro.overleaf-conflict.<UTC>.tex 让你手动 merge。
+     - …
+   待确认的删除 D 个：
+     - sections/06_appendix.tex 在本地被删，Overleaf 端仍存在 → 是否在 Overleaf 端也删？
+     - figures/old_pipeline.png 在 Overleaf 端被删，本地仍存在 → 是否在本地也删？
+   要执行吗？冲突按当前策略处理；删除：(y = 全部传播 / n = 都不传播 / 默认 n)
+   ```
+
+**Step 3：执行**
+
+`mcp__paic__paic_draft_sync_overleaf(project_dir=<cwd>)`（不传 dry_run）。
+
+如果用户对 deletions_pending 答了「全部传播」→ 加 `confirm_deletions=true`；
+答「都不传播」/ 默认 → 不传该参数（baseline 会暂留这些条目，下次 sync 仍会问）。
+
+如果用户想临时切策略（比如「这次冲突全用 remote 覆盖本地」）→ 传
+`conflict_strategy="remote_wins"`；不传则用 yaml 配置里的（默认 `keep_both`）。
+
+### Step 4：报告
+
+中文紧凑报告：
+
+```
+同步完成（target=<target_dir>）：
+  pushed N | pulled M | conflicts K | deletions D | ignored I
+  baseline_at: <UTC timestamp>
+```
+
+如有冲突 → 列出每条 path + remote_kept_as 路径；告诉用户「Dropbox 客户端会自动
+上传到 Overleaf，约 5-30s。conflict 文件请用 diff 工具手动 merge，merge 后删掉
+`.overleaf-conflict.<UTC>` 那份再重 sync 一次让 baseline 干净」。
+
+### 冲突解决建议
+
+`keep_both` 策略下，冲突文件在本地变成两份：
+
+- `sections/01_intro.tex`（本地版，PAI-C 同步保留 + push 到 Overleaf）
+- `sections/01_intro.overleaf-conflict.<UTC>.tex`（Overleaf 版被拉回本地）
+
+下一步用户：
+
+1. 用 diff 工具（VS Code、Beyond Compare、`git diff --no-index` 等）比对，手动 merge
+2. merge 完后**删掉** `.overleaf-conflict.<UTC>` 文件
+3. 重 sync 一次：merged 版本 push 到 Overleaf；baseline 也清理干净
+
+不要试图在 SKILL 里自动 merge LaTeX——段落级合并太复杂、错了很难发现，让用户做。
+
+### 单向 mode（少用）
+
+如果用户**只想 push** 本地到 Overleaf（比如不想拉 Overleaf 端的 typo fix）→
+`direction="push_only"`；**只想 pull**（比如刚在 Overleaf 大改了一通、把改动拉回
+本地继续 PAI-C 操作）→ `direction="pull_only"`。默认 `auto` 双向。
+
 ## Style
 - 中文叙述。LaTeX 文件路径与命令保留原样，不要翻译。
 - **不要主动建议**用户改 .tex 文件 —— 让用户决定改不改；polish 工具是有意触发，不是被推送。
@@ -228,3 +329,6 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
   2. 在该段外包 `{% raw %}...{% endraw %}` 让 Jinja 整段透传（适合大段 `\lstset` / `\tikzset` 配置）
   scaffold 出来的模板若编译报 `unexpected '%'`，多半就是这个问题。
 - **polish 偶发改写 cite_key 标点**：LLM 极小概率会把 `\cite{doi_10_3389_fnins_2023_1276067}` 写成 `\cite{doi_10.3389_fnins_2023_1276067}`（恢复了 DOI 里的句号）。命中率约 1/6。**预防方法**：调 `paic_draft_polish` 时显式传 `instruction="Preserve all \\cite{} keys character-for-character — they are programmatic identifiers, not text. Underscores must remain underscores; never reintroduce dots or change case."`。失败时 `paic.latex.guard.cite_keys_preserved` 会检测到（新 cite key 不在 orig 集合里）并拒绝，看到 polish 拒绝时直接 retry 即可。
+- **Overleaf 同步前**：`~/Dropbox/Apps/Overleaf/` 不存在 → 不是 PAI-C 配置错，而是用户还没在 Overleaf 后台连 Dropbox。SKILL 已 silently skip + 一句提示，不要 retry，也不要让用户去 PAI-C 配置里找问题。
+- **Dropbox 冲突文件**：用户没等上次 Dropbox sync 完成就再跑 `paic_draft_sync_overleaf` → Dropbox 自身会落地 `<file> (conflicted copy YYYY-MM-DD).tex`。本工具不检测这些；下次 sync 会原样覆盖正本，conflicted copy 留给用户自己处理（删 / 留作历史）。
+- **mtime 跨 Dropbox 客户端版本不可靠**：`conflict_strategy="newer_wins"` 依赖 mtime，但 Dropbox 同步文件时偶尔会重置 mtime；这种策略对 Windows / macOS / Linux 客户端版本敏感。混合协作场景建议默认 `keep_both`。

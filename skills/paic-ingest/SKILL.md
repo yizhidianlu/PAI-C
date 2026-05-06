@@ -1,7 +1,7 @@
 ---
 name: paic-ingest
-description: Ingest selected papers into the project library — adds them to .paic/library/selected.yaml, downloads PDFs/markdowns via the appropriate per-platform tool (arxiv MCP for arxiv; paper-search-mcp for pubmed / biorxiv / openalex / etc.), and stores a project-local copy at .paic/library/pdfs/<cite_key>.<ext>. Use after /paic-search when the user picks which papers to keep.
-allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic__paic_library_add, mcp__paic__paic_library_attach_paper, mcp__paic__paic_workspace_status, mcp__paic__paic_arxiv_pace, mcp__paic__paic_search_pace, mcp__paper_search__download_arxiv, mcp__paper_search__download_pubmed, mcp__paper_search__download_biorxiv, mcp__paper_search__download_medrxiv, mcp__paper_search__download_pmc, mcp__paper_search__download_openalex, mcp__paper_search__download_crossref, mcp__paper_search__download_ieee, mcp__paper_search__download_with_fallback
+description: Ingest selected papers into the project library — adds them to .paic/library/selected.yaml, downloads PDFs/markdowns via the appropriate per-platform tool (arxiv MCP for arxiv; paper-search-mcp for pubmed / biorxiv / openalex / etc.), names files as `NNN_title.<ext>` under .paic/library/pdfs/, and (optionally) syncs the batch to Zotero via zotero-mcp. Use after /paic-search when the user picks which papers to keep.
+allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic__paic_library_add, mcp__paic__paic_library_attach_paper, mcp__paic__paic_workspace_status, mcp__paic__paic_arxiv_pace, mcp__paic__paic_search_pace, mcp__paper_search__download_arxiv, mcp__paper_search__download_pubmed, mcp__paper_search__download_biorxiv, mcp__paper_search__download_medrxiv, mcp__paper_search__download_pmc, mcp__paper_search__download_openalex, mcp__paper_search__download_crossref, mcp__paper_search__download_ieee, mcp__paper_search__download_with_fallback, mcp__zotero_mcp__zotero_get_collections, mcp__zotero_mcp__zotero_create_collection, mcp__zotero_mcp__zotero_add_by_doi, mcp__zotero_mcp__zotero_add_by_url, mcp__zotero_mcp__zotero_add_from_file
 ---
 
 # /paic-ingest — add papers to the project library
@@ -16,7 +16,17 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 
 2. Build a list of paper dicts to add. Each dict should have at least `title` plus one id (`arxiv_id` / `doi` / `s2_id`). If the user references results from a recent `/paic-search`, reuse the dicts from that turn's tool result. If they pasted bare arXiv ids, construct minimal dicts (`{arxiv_id, title}` — fetch the title via `mcp__arxiv__search_papers` if you don't have it; if you need >3 lookups, intersperse `mcp__paic__paic_arxiv_pace()` between calls).
 
-3. **顺序下载（按平台路由）** —— 每篇按其 `platform` / 标识符走对应的下载工具，把文件落到 `<project>/.paic/library/pdfs/<cite_key>.<ext>`。
+   **2.5 计算每篇 `display_basename`**（人类可读的物理 PDF 文件名；后续 step 3.x 都按这个落盘 / rename）：
+
+   1. 调一次 `mcp__paic__paic_workspace_status(project_dir=<cwd>)` 拿当前 selected.yaml 篇数 K（首次 ingest 时 K=0）。
+   2. 对本批论文按用户指定顺序枚举 `i = 1..N`（N = 本批论文数）：
+      - `seq = K + i`（3 位 0 填充：K=12, i=3 → `015`；K=0, i=1 → `001`）。
+      - `title_slug = re.sub(r'[^A-Za-z0-9]+', '_', title.strip()).lower().strip('_')[:60]`（非字母数字一律换 `_`、去首尾 `_`、限 60 字符；空 title 极少见，slug 落到 `ref`）。
+      - `display_basename = f"{seq:03d}_{title_slug}"`（不含扩展名；如 `001_attention_is_all_you_need`）。
+   3. 序号策略**库内累积**——同一论文重 ingest 时 attach 看到 dest 已存在会 silently 跳过 + 回写 yaml；不同批次序号自然衔接（005 之后下一批从 006 起）。
+   4. cite_key（`arxiv_2401_12345` / `doi_10_1234_abc` / `s2_<id>` / `<title 首词>_<year>`）仍是 **BibTeX `\cite{...}` 引用键**，与物理 PDF 文件名彻底解耦——cite_key 在 LaTeX 输出 / `_resolve_paper` entry 匹配里使用，不再做物理文件名。`paic_library_attach_paper(... display_name=f"{display_basename}.{ext}")` 会把 `pdf_local_path = "<display_basename>.<ext>"` 回写 selected.yaml，让 `/paic-summarize` 能直接定位 PDF。
+
+3. **顺序下载（按平台路由）** —— 每篇按其 `platform` / 标识符走对应的下载工具，把文件落到 `<project>/.paic/library/pdfs/<display_basename>.<ext>`（人类可读：序号_标题；如 `001_attention_is_all_you_need.pdf`）。
 
    **3.0 预检（在循环开始之前做一次）**：
    - 统计待下载论文里**会走 `download_with_fallback`** 的篇数（即下面路由表第 3、4 行 — `openalex` / `crossref` / DOI-only 的论文）。
@@ -52,9 +62,9 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 
    | 论文特征 | 下载工具 | Pace 工具 | 落地方式 |
    |---|---|---|---|
-   | 有 `arxiv_id`（或 `platform == "arxiv"`） | `mcp__arxiv__download_paper(paper_id=<arxiv_id>)` | `mcp__paic__paic_arxiv_pace()` | 上游写到 `~/.arxiv-mcp/papers/`；之后调 `paic_library_attach_paper(project_dir, paper)` 自动 copy 一份到 `library/pdfs/<cite_key>.md` |
+   | 有 `arxiv_id`（或 `platform == "arxiv"`） | `mcp__arxiv__download_paper(paper_id=<arxiv_id>)` | `mcp__paic__paic_arxiv_pace()` | 上游写到 `~/.arxiv-mcp/papers/`；之后调 `paic_library_attach_paper(project_dir, paper, display_name=f"{display_basename}.md")` 自动 copy 一份到 `library/pdfs/<display_basename>.md` 并回写 `pdf_local_path` |
    | `platform == "pubmed"`（**注意**：`download_pubmed` 是 stub，永远返回 "not supported"；上游 NCBI 不允许程序化下 PMID 的 PDF。**不要直调** `download_pubmed`） | `mcp__paper_search__download_with_fallback(source="pubmed", paper_id=<PMID>, doi=<paper.doi 或 "">, save_path="<cwd>/.paic/library/pdfs/")` —— fallback 内部还会试 PMC OA、Unpaywall、Sci-Hub | `mcp__paic__paic_search_pace(platform="pubmed")` | save_path 是目录 + 必须 rename（见 3.2）。fallback 全链路失败标 "未下载（pubmed_no_oa）" |
-   | `platform` 是 `biorxiv` / `medrxiv` / `pmc` 之一（这三个 `download_pdf` 是真实下载、不是 stub） | `mcp__paper_search__download_<platform>(paper_id=<doi 或 PMCID>, save_path="<cwd>/.paic/library/pdfs/<cite_key>.pdf")` | `mcp__paic__paic_search_pace(platform="<platform>")` | 这几个上游接受**文件形式** save_path，直接落地，**不**用 attach |
+   | `platform` 是 `biorxiv` / `medrxiv` / `pmc` 之一（这三个 `download_pdf` 是真实下载、不是 stub） | `mcp__paper_search__download_<platform>(paper_id=<doi 或 PMCID>, save_path="<cwd>/.paic/library/pdfs/<display_basename>.pdf")` | `mcp__paic__paic_search_pace(platform="<platform>")` | 这几个上游接受**文件形式** save_path，直接落地；**之后**调一次 `paic_library_attach_paper(project_dir, paper, source_path="<同 save_path>", display_name=f"{display_basename}.pdf")` 回写 yaml（attach 看 dest=source 已存在 → silently 跳 copy，但会写 `pdf_local_path`） |
    | `platform == "openalex"`（openalex **不托管 PDF**，但永远带 DOI；不要调 `download_openalex` / `download_with_fallback(source="openalex")`，二者都会报 `Unsupported source`） | `mcp__paper_search__download_with_fallback(source="crossref", paper_id=<paper.doi>, doi=<paper.doi>, save_path="<cwd>/.paic/library/pdfs/")` | `mcp__paic__paic_search_pace(platform="crossref")` | save_path **是目录、不是文件路径**；上游自决文件名（如 `europepmc_PMID_*.pdf` / `unpaywall_<doi>.pdf`）；**下载成功后必须 rename**（见 3.2）|
    | `platform == "crossref"` 或 有 `doi` 但 `platform` 不在以上几行（含未识别 platform 的 fallback） | `mcp__paper_search__download_with_fallback(source="crossref", paper_id=<doi>, doi=<doi>, save_path="<cwd>/.paic/library/pdfs/")` | `mcp__paic__paic_search_pace(platform="crossref")` | 同上：save_path 是目录 + 必须 rename |
    | `platform == "ieee"`（IEEE 论文带 `pdf_url` 但通常**需要机构 IP / 订阅**） | 先试 `mcp__paper_search__download_ieee(paper_id=<paper.paper_id 或 doi>, save_path="<cwd>/.paic/library/pdfs/")`；返回 401/403/`access denied`/`not authorized`/空 PDF → 退到 `mcp__paper_search__download_with_fallback(source="crossref", paper_id=<paper.doi>, doi=<paper.doi>, save_path="<cwd>/.paic/library/pdfs/")` | `mcp__paic__paic_search_pace(platform="ieee")` 主路；fallback 后再 `paic_search_pace(platform="crossref")` | save_path 是目录 + 必须 rename（见 3.2）。两条都失败 → "未下载（ieee_paywalled）"——见**已知陷阱**关于 IOP/IEEE OA 命中率 |
@@ -66,9 +76,10 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
    **3.2 `download_with_fallback` 后的 rename 流程**（针对路由表里所有调 `download_with_fallback` 的行 —— pubmed / openalex / crossref / ieee fallback / acm）：
    1. 调 `download_with_fallback` 前先记录 `library/pdfs/` 当前文件清单（或记 `download_with_fallback` 返回的 `file_path` / `path` / `filename` 字段——上游通常会返回实际写盘路径）。
    2. 下载成功后从返回值拿 `file_path`，否则在 `library/pdfs/` 里找新增的文件（与 step 1 的清单 diff）。
-   3. 用 shell rename：`Move-Item <实际文件名> <cite_key>.<原扩展名>`（PowerShell）或 `mv ...`（bash）；扩展名沿用上游的（多数是 `.pdf`，偶尔 `.xml`）。
-   4. **不要**强行 rename 成 `.pdf` —— 如果上游返回 XML 全文，summarize 走 pypdf fallback 会失败，让 `.xml` 保留即可（summarize 逐级 fallback 时还能撞到 `library/pdfs/<cite_key>.md` 等候补）。
-   5. Rename 失败（如目标已存在）→ 当作下载成功处理，summary 注明 "已存在，未覆盖"。
+   3. 用 shell rename：`Move-Item <实际文件名> <display_basename>.<原扩展名>`（PowerShell）或 `mv ...`（bash）；扩展名沿用上游的（多数是 `.pdf`，偶尔 `.xml`）。
+   4. **不要**强行 rename 成 `.pdf` —— 如果上游返回 XML 全文，summarize 走 pypdf fallback 会失败，让 `.xml` 保留即可。
+   5. Rename 完成后调一次 `mcp__paic__paic_library_attach_paper(project_dir=<cwd>, paper=<原 paper dict>, source_path="<cwd>/.paic/library/pdfs/<display_basename>.<ext>", display_name=f"{display_basename}.{ext}")` —— attach 看 dest=source 已存在 → silently 跳 copy，但会回写 `pdf_local_path` 到 selected.yaml，让 `/paic-summarize` 能直接定位 PDF。
+   6. Rename 失败（如目标已存在，比如重 ingest 同一篇）→ 当作下载成功处理，summary 注明 "已存在，未覆盖"；同样要补一次上一步的 attach 调用以确保 yaml 字段写入。
 
    **3.3 europepmc / fallback 内容校验**（针对 step 3.2 来源的所有文件，**必做**——`download_with_fallback` 内 europepmc 路径会 silent 返回不相关论文的 PDF）：
 
@@ -77,15 +88,15 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 
       PowerShell / cmd（Windows 任一 locale 通用）：
       ```
-      uv run python -c "import pypdf,sys; sys.stdout.reconfigure(encoding='utf-8',errors='replace'); print(pypdf.PdfReader(sys.argv[1]).pages[0].extract_text()[:1500])" <cite_key>.pdf
+      uv run python -c "import pypdf,sys; sys.stdout.reconfigure(encoding='utf-8',errors='replace'); print(pypdf.PdfReader(sys.argv[1]).pages[0].extract_text()[:1500])" <display_basename>.pdf
       ```
 
       bash / zsh：
       ```
-      uv run python -c "import pypdf,sys; print(pypdf.PdfReader(sys.argv[1]).pages[0].extract_text()[:1500])" <cite_key>.pdf
+      uv run python -c "import pypdf,sys; print(pypdf.PdfReader(sys.argv[1]).pages[0].extract_text()[:1500])" <display_basename>.pdf
       ```
 
-      或 `pdftotext -l 1 <cite_key>.pdf -` 二选一。
+      或 `pdftotext -l 1 <display_basename>.pdf -` 二选一。
 
       Windows 命令里的 `sys.stdout.reconfigure(...)` 是必须的——中文 locale 下默认 stdout 走 GBK，遇到 PDF 几乎一定有的 ©/希腊字母/Unicode dash 会抛 `UnicodeEncodeError`。
    3. 多信号校验（**全部满足**才算 OK，任一不满足即标 europepmc_wrong_paper）：
@@ -95,17 +106,17 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
       - **(c) 兜底字符串相似度**：`difflib.SequenceMatcher(None, title.lower(), extracted.lower()).find_longest_match(...)`，最长公共子串字符数 ≥ title 字符数 × **0.4**。
 
       ⚠️ **高频词重叠领域警告**（EEG/MI/BCI、单细胞测序、diffusion 视频生成、protein folding、climate-AI、quantum chemistry 等）：(b) 单独不可靠——本批 EEG/MI/BCI 实测 4-6/8 词命中的 PDF 全是错论文。**(a) 作者姓氏校验是这类主题下唯一可靠的强信号**，必须命中。
-   4. **同 size 文件优先查**：`library/pdfs/` 多个原始 europepmc 文件 size 完全一致（或 rename 后 `<cite_key>.pdf` 大小相同）→ 大概率同一污染源；一个污染则同 size 的全列入嫌疑。
+   4. **同 size 文件优先查**：`library/pdfs/` 多个原始 europepmc 文件 size 完全一致（或 rename 后 `<display_basename>.pdf` 大小相同）→ 大概率同一污染源；一个污染则同 size 的全列入嫌疑。
    5. 命中污染（任一信号不满足）：
-      1. **列清单给用户**（不要直接删）：cite_key + DOI（或 arxiv_id）+ 实际抽出的标题/作者前 80 字符 + 不命中的信号（surname / title 词率 / 字符相似度）
+      1. **列清单给用户**（不要直接删）：display_basename + cite_key + DOI（或 arxiv_id）+ 实际抽出的标题/作者前 80 字符 + 不命中的信号（surname / title 词率 / 字符相似度）
       2. **问一句中文**：「这 N 篇 europepmc fallback 内容错位（[原因列表]），要删除并标 europepmc_wrong_paper 吗？」
-      3. 用户确认后才删，**逐篇** `Remove-Item <cite_key>.pdf`（PowerShell）/ `rm <cite_key>.pdf`（bash）——**不要**一条命令删多个文件。harness 默认拦批量删除 pre-existing PDF（reason 里会写 "Mass deletion of pre-existing local PDF files based on an unverified heuristic check"），这不是绕路而是必须的授权礼仪。
+      3. 用户确认后才删，**逐篇** `Remove-Item <display_basename>.pdf`（PowerShell）/ `rm <display_basename>.pdf`（bash）——**不要**一条命令删多个文件。harness 默认拦批量删除 pre-existing PDF（reason 里会写 "Mass deletion of pre-existing local PDF files based on an unverified heuristic check"），这不是绕路而是必须的授权礼仪。
       4. 删完逐篇标 `europepmc_wrong_paper` 进未下载列表
       5. 用户回「不删」/「我要先看一下」 → 保留文件，summary 标 `europepmc_suspect_kept`，让用户在 `/paic-summarize` 跑前再决定是否删
       - **不要**默认让可疑 PDF 进下游——pypdf 抽出来的大段无关文本会污染 `/paic-summarize` 的 chunk embedding 和 `/paic-draft` 的引用
    6. 校验过关：保留文件，summary 不提
 
-   **cite_key 计算**（与 BibTeX 一致）：
+   **cite_key 计算**（仅作 BibTeX `\cite{...}` 引用键 + `_resolve_paper` entry 匹配；**不再**做物理 PDF 文件名）：
    - `arxiv_id`: `arxiv_<arxiv_id 里非字母数字替换为 "_">`（如 `2401.12345` → `arxiv_2401_12345`）
    - `doi`: `doi_<doi 里非字母数字替换为 "_">`（如 `10.1234/abc` → `doi_10_1234_abc`）
    - `s2_id`: `s2_<id>`
@@ -133,13 +144,49 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 
 4. Render a short Chinese summary:
    - 已纳入 N 篇 (列 title)
-   - **本地存档**：`.paic/library/pdfs/` 下新增了 X 个文件（列前几个 cite_key + 扩展名，如 `arxiv_2401_12345.md`、`doi_10_1234_abc.pdf`）
-   - **rename 命中**：Y 次（download_with_fallback 自定义文件名 → 改回 `<cite_key>.<ext>`）
+   - **本地存档**：`.paic/library/pdfs/` 下新增了 X 个文件（列前几个 display_basename + 扩展名，如 `001_attention_is_all_you_need.md`、`002_motor_imagery_classification.pdf`）
+   - **rename 命中**：Y 次（download_with_fallback 自定义文件名 → 改回 `<display_basename>.<ext>`）
    - **未下载**：M 篇（按原因分组：`s2 不托管 PDF` / `paper-search-mcp 未注册` / `unpaywall_email_missing` / `Unsupported source` / `pubmed_no_oa` / `ieee_paywalled` / `acm_no_oa` / `publisher_referer_block`（IOP/IEEE OA 但被发布商拦） / `连续 3 次 429 用户决定 skip` / `download_with_fallback 全链路失败` / `download_with_fallback_int_bug` / `europepmc_wrong_paper` / `europepmc_suspect_kept` / `subscription_journal_no_oa`）
-   - **手动下载提示**：若 `europepmc_wrong_paper` / `subscription_journal_no_oa` / `publisher_referer_block` / `ieee_paywalled` 任一 ≥1，列出受影响论文（cite_key + DOI/arxiv_id + 期望落盘路径 `library/pdfs/<cite_key>.pdf`），告诉用户「这些篇 silent corruption / 订阅墙 / 发布商防护，请浏览器手取 PDF 放到上面对应路径，attach 是 idempotent 的，下次 `/paic-summarize` 会自动用上」。
+   - **手动下载提示**：若 `europepmc_wrong_paper` / `subscription_journal_no_oa` / `publisher_referer_block` / `ieee_paywalled` 任一 ≥1，列出受影响论文（display_basename + DOI/arxiv_id + 期望落盘路径 `library/pdfs/<display_basename>.pdf`），告诉用户「这些篇 silent corruption / 订阅墙 / 发布商防护，请浏览器手取 PDF 放到上面对应路径，attach 是 idempotent 的，下次 `/paic-summarize` 会自动用上」。
    - 跳过 K 篇 (重复; 列 arxiv_id)
    - 429 retry 命中：J 次（如有）
    - 当前库存: T 篇
+
+5. **（可选）同步到 Zotero** —— 把本批论文同步到 Zotero library，含 metadata + PDF 附件 + collection 组织。
+
+   **5.0 检测 zotero-mcp 可用性**：
+   - 尝试调一次 `mcp__zotero_mcp__zotero_get_collections()`。
+   - 工具不在 allowed-tools 实际可用集 / 调用抛 connection error / 返回 error → **silently 跳过 step 5.x**，不向用户报错（用户没装 zotero-mcp 是常态）。
+   - 成功（返回 collection 列表）→ 进 5.1。
+
+   **5.1 询问用户**（一句中文）：
+   ```
+   检测到 zotero-mcp。本批 N 篇要同步到 Zotero 吗？(y/n，默认 n)
+   默认 collection: paic-ingest-<YYYYMMDD>，可改名或留空（不入 collection）
+   ```
+   - 用户回 `n` / 静默 / 跳过 → 直接结束 ingest。
+   - 用户回 `y` 或具体 collection 名 → 进 5.2。
+
+   **5.2 准备 collection**（仅当用户没回「留空」时）：
+   - 拿 5.0 返回的 collection 列表，按 name 查重；存在则直接用其 `key`。
+   - 不存在 → 调 `mcp__zotero_mcp__zotero_create_collection(name=<final_name>)`，拿到新 collection `key`。
+   - 创建失败（如重名 race）→ 退一步当作「不入 collection」继续 5.3，不打断。
+
+   **5.3 逐篇路由 add**（每次单独一条 zotero tool 调用）：
+
+   | 优先级 | 条件 | 工具 |
+   |---|---|---|
+   | 1 | `paper.doi` 非空 | `mcp__zotero_mcp__zotero_add_by_doi(doi=<doi>, collections=[<collection_key 或 略>], tags=["paic", *paper.tags], attach_mode="auto")` —— Zotero 自动抓 CrossRef 元数据 + 试 Unpaywall / arXiv / PMC OA PDF |
+   | 2 | `paper.arxiv_id` 非空 | `mcp__zotero_mcp__zotero_add_by_url(url=f"https://arxiv.org/abs/{arxiv_id}", collections=[...], tags=["paic", ...])` |
+   | 3 | 本地 PDF 已落地（`pdf_local_path` 非空 & 文件存在） | `mcp__zotero_mcp__zotero_add_from_file(file_path="<cwd>/.paic/library/pdfs/<pdf_local_path>", title=<title>, item_type="journalArticle", collections=[...], tags=["paic", ...])` |
+   | 4 | 三种都不可行 | 列入 `zotero_skipped`（reason: `no_doi_no_arxiv_no_pdf`） |
+
+   每篇任意一种 zotero call 报错 → silently retry 一次（除明确 4xx）；仍失败则计入失败列表，不要打断后续篇。
+
+   **5.4 渲染中文同步报告**（紧跟 step 4 输出）：
+   - 同步成功 J/N 篇（collection: `<final_name>` 或 `（未入 collection）`）
+   - 失败 K 篇（按原因分组：`no_doi_no_arxiv_no_pdf` / `zotero_api_error` / `duplicate_in_zotero`（zotero_add_by_doi 上游会去重，返已存在 item key 视为成功）/ `collection_create_failed` / `zotero_app_offline`）
+   - 一行提示：「Zotero item key 仅存于 zotero-mcp，PAI-C 不维护反向映射；后续在 Zotero 改 metadata / 加 note / 移 collection 都不影响 PAI-C」。
 
 ## Style
 - 中文。
@@ -147,6 +194,8 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 - 若用户没指定 tags，留空列表。
 - **耗时预期**：17 篇 ingest 在默认（batch=1, pace=6s）下约 102s（17 × 6s pace + 网络）。如果用户嫌慢且**网络稳定无 429 历史**，可改 `~/.paic/config.yaml` 的 `providers.arxiv.inter_batch_delay_sec` 到 4 或 5（自担 429 风险），重启 Claude Code 后再跑。**不要**主动跳过 pace 或调到 3 以下，会触发 429。
 - **看到 429 不要慌**——按 step 3a 的 retry 流程跑；这是已知风险，不是配置错误。
+- **Step 5（Zotero 同步）是可选**——zotero-mcp 未注册 / 用户答 n / 任意 zotero call 失败 → 不要把这些当作 ingest 失败；step 4 已经把 ingest 主流程的成果定调，step 5 只是锦上添花。
+- **物理 PDF 文件名 = `<display_basename>.<ext>`**（人类可读：`001_attention_is_all_you_need.pdf`）；BibTeX `\cite{KEY}` 和 `_resolve_paper` entry 匹配仍用 `<cite_key>`（如 `arxiv_2401_12345`）。两者解耦——不要混用。selected.yaml 里 `pdf_local_path` 是新名，`/paic-summarize` 优先读这个、没有再回退到 `<cite_key>.<ext>`（兼容老库）。
 
 ## 已知陷阱
 - arxiv MCP 不同版本默认存储路径不一样（`~/Documents/arxiv-papers/` vs `~/.arxiv-mcp/papers/`）。PAI-C 默认两个都探，但若用户的安装把文件放到第三处，`/paic-summarize` 会回 `paper_markdown_not_found`。处理方式见 `paic-summarize` skill —— **不要**手动复制目录绕行；让 `/paic-summarize` 通过 `mcp__arxiv__read_paper` 取文本再传 `paper_text=`。
@@ -154,11 +203,11 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 - **paper-search-mcp 的 download 工具签名**：约定接受 `paper_id` + `save_path`，但不同 platform 的具体参数名可能略有差异（如 `pmid` vs `paper_id`、`pmcid` 等）。第一次跑某 platform 时如果工具报参数错误，从工具的错误响应里看到正确字段名后调整。`download_with_fallback` 实际签名是 `(source, paper_id, doi="", title="", save_path=...)` —— `source` + `paper_id` 都必填，**不是**只接 `doi`。
 - **`download_pubmed` 是 stub**：上游 `paper_search_mcp/academic_platforms/pubmed.py` 的 `download_pdf` 直接返回 "PDF download not supported"——NCBI E-utilities 不允许程序化下 PMID 的 PDF。**不要直调** `download_pubmed`；走 `download_with_fallback(source="pubmed", paper_id=<PMID>, doi=<DOI>)`，fallback 内部会试 PMC OA → Unpaywall → Sci-Hub。
 - **同样别直调的 stub**：`download_acm`（ACM 没官方 PDF API，永远 NotImplementedError）。SKILL 路由表已经把 ACM 直接指向 `download_with_fallback`。
-- **`download_with_fallback` 的 `save_path` 是目录、不是文件路径**（实测）：传文件路径上游会自决文件名，把文件丢到该路径所在目录里——典型表现是 `library/pdfs/` 下出现 `europepmc_PMID_<n>.pdf`、`unpaywall_<doi>.pdf` 而不是 `<cite_key>.pdf`。SKILL 的 step 3.2 强制 rename 闭合这个差异。
+- **`download_with_fallback` 的 `save_path` 是目录、不是文件路径**（实测）：传文件路径上游会自决文件名，把文件丢到该路径所在目录里——典型表现是 `library/pdfs/` 下出现 `europepmc_PMID_<n>.pdf`、`unpaywall_<doi>.pdf` 而不是 `<display_basename>.pdf`。SKILL 的 step 3.2 强制 rename 闭合这个差异。
 - **`Unsupported source`**：`download_with_fallback(source=...)` 的 source 白名单是上游内部硬编码，目前已知 `openalex` / `s2` / `semantic` / `google_scholar` 不支持。openalex 走 DOI 路径（路由表第 3 行）；其它不支持的 source 直接列入未下载。
 - **`paic doctor` 已经会检查 UNPAYWALL_EMAIL / IEEE_API_KEY / ACM_API_KEY**（`credential: <platform>` 行）：当 `external_search.enabled=true` 且对应平台在当前 preset / 用 download_with_fallback 时缺 env，会有 WARN 行 + fix 提示。SKILL 的 step 3.0 预检仍保留作为运行时兜底（用户可能跳过了 doctor）。
 - **IEEE / ACM 的下载现状**：IEEE 直连需要机构订阅，多数家庭网络拿不到 PDF（API 返回 401/403）；ACM 没有官方 PDF API，paper-search-mcp 的 `download_acm` 是空实现。两个平台都靠路由表里的 `download_with_fallback(source="crossref", paper_id=<doi>, doi=<doi>, ...)` 走 Unpaywall / Crossref / OA repo 兜底。
-- **IOP / IEEE 期刊 OA 链接命中率 <20%**（实测）：即便 Unpaywall / Crossref 找到了 OA URL，IOP（J. Neural Eng. 等）和 IEEE（TNSRE / TII / TBME 等）的 PDF endpoint 普遍有 referer / cookie / Cloudflare 防护，工具会拿到 `resolved OA URL but download failed`。这**不是** `UNPAYWALL_EMAIL` 缺失导致的——已经登记 email 也照样拦。看到这种错误就标 "未下载（publisher_referer_block）" 跳过，不要 retry；让用户拿 DOI 用浏览器手取或走校园 VPN，再 `paic_library_attach_paper` 手工塞进 `library/pdfs/<cite_key>.pdf`。Springer / Wiley / Elsevier 的非 OA 文章也有类似行为，但命中率经验值 30-60%，比 IOP/IEEE 略好。
+- **IOP / IEEE 期刊 OA 链接命中率 <20%**（实测）：即便 Unpaywall / Crossref 找到了 OA URL，IOP（J. Neural Eng. 等）和 IEEE（TNSRE / TII / TBME 等）的 PDF endpoint 普遍有 referer / cookie / Cloudflare 防护，工具会拿到 `resolved OA URL but download failed`。这**不是** `UNPAYWALL_EMAIL` 缺失导致的——已经登记 email 也照样拦。看到这种错误就标 "未下载（publisher_referer_block）" 跳过，不要 retry；让用户拿 DOI 用浏览器手取或走校园 VPN，再 `paic_library_attach_paper(... source_path=<浏览器下的 PDF>, display_name=f"{display_basename}.pdf")` 手工塞进 `library/pdfs/<display_basename>.pdf`（或不传 display_name 走兼容路径 `library/pdfs/<cite_key>.pdf`，summarize 都能找到）。Springer / Wiley / Elsevier 的非 OA 文章也有类似行为，但命中率经验值 30-60%，比 IOP/IEEE 略好。
 - **library/pdfs/ 占空间**：100 篇 × ~3MB ≈ 300MB。可以加 `.paic/library/pdfs/*` 进 `.gitignore` 不进 repo；attach 是 idempotent 的，删了重 ingest 即可恢复。
 - **paper-search-mcp 没注册**：SKILL allowed-tools 里有这些工具但实际调用会失败（"tool not available"）。这种情况下非 arxiv 论文 silently skip 下载、只 ingest metadata；summary 提示用户「装上 paper-search-mcp 后重 ingest 就有 PDF 了」（教程在 docs/external-search.md）。
 - **`download_with_fallback` 'int' object has no attribute 'strip'**：上游 paper-search-mcp 解析某些 crossref / europepmc metadata 时把整数字段当字符串 `.strip()`，间歇报错——与 `use_scihub` / `UNPAYWALL_EMAIL` 都无关。本批实测约 **1/4** fallback 命中。**无解、上游问题**；遇到直接标 `download_with_fallback_int_bug` 跳过，不要 retry，也不要试图换参数。
@@ -174,5 +223,5 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
   - **预防**：step 3.0.5 的 DOI 前缀 prefilter 把订阅墙黑名单（10.1088 / 10.1109 / 10.1016 / 10.1002 / 10.1007）提前剔除、不进 fallback；OA 白名单（10.3389 / 10.1371 / 10.3390 / 10.1038/s41598- / 10.7717）正常走 fallback；其它灰名单走 fallback + step 3.3 严格校验。
   - **检测**：rename 完之后立刻抽 page-1 前 1500 字符，按 step 3.3 三信号校验：(a) 作者姓氏命中（必要、强信号；高频词领域唯一可靠的判据）+ (b) title content word 命中率 ≥ 75% + (c) 字符串相似度兜底。
   - **行动**：任一信号不满足 → **列清单给用户问授权后**才删 PDF（harness 默认拦批量删除 pre-existing 文件，必须先授权）+ 标 `europepmc_wrong_paper` + 进未下载列表。
-  - **用户侧**：summary 单独列出 `europepmc_wrong_paper` 和 `subscription_journal_no_oa` 两类，告诉用户用浏览器拿 DOI 手取 PDF 放到 `library/pdfs/<cite_key>.pdf`，下次 summarize 会自动用上（attach idempotent）。
+  - **用户侧**：summary 单独列出 `europepmc_wrong_paper` 和 `subscription_journal_no_oa` 两类，告诉用户用浏览器拿 DOI 手取 PDF 放到 `library/pdfs/<display_basename>.pdf`（首选，与本次 ingest 的命名一致）或 `library/pdfs/<cite_key>.pdf`（兼容路径），下次 summarize 都能自动用上（attach idempotent）。
   - SKILL step 3.0.5 + 3.3 已把这套自动化。

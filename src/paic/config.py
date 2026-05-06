@@ -75,6 +75,28 @@ _DEFAULT_PLATFORM_PACING: dict[str, float] = {
     "acm": 1.0,
 }
 
+# Overleaf sync defaults — bidirectional sync between
+# ``<project>/.paic/drafts/`` and ``<target_root>/<project_subdir>/``,
+# typically the user's Dropbox + Overleaf-linked folder. ignore_patterns
+# are fnmatch globs against file basenames; matched files are skipped
+# both ways and never enter the baseline manifest.
+DEFAULT_OVERLEAF_TARGET_ROOT = Path.home() / "Dropbox" / "Apps" / "Overleaf"
+_DEFAULT_OVERLEAF_IGNORE_PATTERNS: tuple[str, ...] = (
+    "*.pdf",
+    "*.aux",
+    "*.log",
+    "*.out",
+    "*.bbl",
+    "*.blg",
+    "*.synctex.gz",
+    "*.toc",
+    "*.nav",
+    "*.snm",
+    "*.bak.*",
+    ".DS_Store",
+    "Thumbs.db",
+)
+
 # Domain presets — used by /paic-init to seed the project's platform list.
 # arxiv + semantic_scholar are NOT included here (they always go through the
 # existing arxiv MCP / paic_s2_search path); workspace_init prepends them
@@ -209,6 +231,47 @@ class ProviderSemanticScholarConfig:
 
 
 @dataclass(frozen=True)
+class OverleafConfig:
+    """Bidirectional Overleaf sync via Dropbox — opt-in.
+
+    Mechanism: Overleaf's account-level Dropbox integration creates
+    ``~/Dropbox/Apps/Overleaf/`` and maps each subdirectory under it to
+    one Overleaf project. PAI-C mirrors ``<project>/.paic/drafts/`` into
+    that subdirectory and pulls back any Overleaf-side edits using a
+    three-way merge against a baseline manifest stored at
+    ``<project>/.paic/state/overleaf_sync.yaml``.
+
+    Defaults are conservative — ``enabled=True`` only enables the
+    feature; SKILL still asks the user before each sync, and missing
+    ``target_root`` (i.e. user hasn't connected Dropbox in Overleaf)
+    short-circuits silently.
+
+    ``conflict_strategy``:
+
+    - ``keep_both``: local stays put, remote version is renamed to
+      ``<name>.overleaf-conflict.<UTC>.<ext>`` and pulled into the local
+      tree; user manually merges.
+    - ``local_wins`` / ``remote_wins``: deterministic overrides — drops
+      one side's edit; useful when one end is the clear authority.
+    - ``newer_wins``: by mtime; cross-OS / cross-Dropbox-client mtime
+      precision can be unreliable, use with care.
+
+    ``prompt_on_delete``: when True (default), a unilateral delete on
+    one side is queued in ``deletions_pending`` and the SKILL asks the
+    user before mirroring the delete to the other side. False = never
+    propagate deletes (most conservative).
+    """
+    enabled: bool = True
+    target_root: Path = DEFAULT_OVERLEAF_TARGET_ROOT
+    project_subdir: str | None = None
+    ignore_patterns: tuple[str, ...] = _DEFAULT_OVERLEAF_IGNORE_PATTERNS
+    conflict_strategy: Literal[
+        "keep_both", "local_wins", "remote_wins", "newer_wins"
+    ] = "keep_both"
+    prompt_on_delete: bool = True
+
+
+@dataclass(frozen=True)
 class RoutingConfig:
     """Per-node routing.
 
@@ -259,6 +322,10 @@ class Config:
     providers_named_extra: dict[str, ProviderAnthropicConfig | ProviderOpenAIConfig] = field(
         default_factory=dict
     )
+    # Bidirectional Overleaf sync — opt-in via ~/.paic/config.yaml. Has a
+    # default factory so older test fixtures that construct Config(...) without
+    # specifying overleaf continue to work.
+    overleaf: OverleafConfig = field(default_factory=OverleafConfig)
     raw: dict = field(default_factory=dict)
 
     @property
@@ -525,6 +592,37 @@ def _load_provider_s2(raw: dict[str, Any]) -> ProviderSemanticScholarConfig:
     )
 
 
+def _load_overleaf(raw: dict[str, Any]) -> OverleafConfig:
+    block = raw.get("overleaf") if isinstance(raw, dict) else None
+    if not isinstance(block, dict):
+        return OverleafConfig()
+
+    target_root_raw = block.get("target_root")
+    if isinstance(target_root_raw, str) and target_root_raw.strip():
+        target_root = Path(target_root_raw).expanduser()
+    else:
+        target_root = DEFAULT_OVERLEAF_TARGET_ROOT
+
+    patterns_raw = block.get("ignore_patterns")
+    if isinstance(patterns_raw, list) and patterns_raw:
+        ignore_patterns: tuple[str, ...] = tuple(str(p) for p in patterns_raw)
+    else:
+        ignore_patterns = _DEFAULT_OVERLEAF_IGNORE_PATTERNS
+
+    strategy = block.get("conflict_strategy", "keep_both")
+    if strategy not in ("keep_both", "local_wins", "remote_wins", "newer_wins"):
+        strategy = "keep_both"
+
+    return OverleafConfig(
+        enabled=bool(block.get("enabled", True)),
+        target_root=target_root,
+        project_subdir=block.get("project_subdir") or None,
+        ignore_patterns=ignore_patterns,
+        conflict_strategy=strategy,  # type: ignore[arg-type]
+        prompt_on_delete=bool(block.get("prompt_on_delete", True)),
+    )
+
+
 def _load_routing(raw: dict[str, Any]) -> RoutingConfig:
     block = raw.get("routing", {}) if isinstance(raw, dict) else {}
     if not isinstance(block, dict):
@@ -559,6 +657,7 @@ def load_config(global_dir: Path | None = None) -> Config:
     providers_arxiv = _load_provider_arxiv(raw)
     providers_external_search = _load_provider_external_search(raw)
     providers_images = _load_provider_images(raw)
+    overleaf = _load_overleaf(raw)
     providers_named_extra = _load_named_providers(raw)
     routing = _load_routing(raw)
 
@@ -585,6 +684,7 @@ def load_config(global_dir: Path | None = None) -> Config:
         providers_arxiv=providers_arxiv,
         providers_external_search=providers_external_search,
         providers_images=providers_images,
+        overleaf=overleaf,
         routing=routing,
         providers_named_extra=providers_named_extra,
         raw=raw,
