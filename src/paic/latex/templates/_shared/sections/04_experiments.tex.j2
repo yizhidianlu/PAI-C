@@ -1,0 +1,56 @@
+% PAI-C-fill v0.1
+
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup}
+
+\paragraph{Datasets.}
+{%- for ds in experiment.datasets %}
+\textbf{{ '{' }}{{ ds.name }}{{ '}' }}: {{ ds.rationale | trim }}{% if ds.splits %} (splits: {{ ds.splits }}){% endif %}.{% if not loop.last %} {% endif %}
+{%- endfor %}
+
+\paragraph{Baselines.}
+{%- for b in experiment.baselines %}
+\textbf{{ '{' }}{{ b.name }}{{ '}' }}: {{ b.why | trim }}{% if b.paper_ref %}~\cite{{ '{' }}{{ b.paper_ref }}{{ '}' }}{% endif %}.{% if not loop.last %} {% endif %}
+{%- endfor %}
+
+\paragraph{Metrics.}
+{%- for m in experiment.metrics %}
+{{ m.name }} ({{ 'lower-is-better' if m.direction == 'min' else 'higher-is-better' }}{% if m.primary %}, \textbf{primary}{% endif %}){% if not loop.last %}; {% endif %}
+{%- endfor %}.
+
+\paragraph{Compute Budget.}
+{{ experiment.compute_budget | default('TODO', true) }}.
+
+\subsection{Main Results}
+
+% TODO: insert main results table.
+\begin{table}[t]
+  \centering
+  \caption{Main results. \textbf{Bold} = best.}
+  \label{tab:main}
+  \begin{tabular}{lcc}
+    \toprule
+    Method & {{ experiment.metrics[0].name if experiment.metrics else 'Metric' }} & ... \\
+    \midrule
+{%- for b in experiment.baselines %}
+    {{ b.name }} & TODO & ... \\
+{%- endfor %}
+    \textbf{Ours} & TODO & ... \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Ablations}
+{%- for a in experiment.ablations %}
+\paragraph{{ '{' }}{{ a.factor }}.{{ '}' }} {{ a.purpose | trim }} (levels: {{ a.levels | join(', ') }}).
+{% endfor %}
+
+\subsection{Success Criteria \& Threats to Validity}
+{%- if experiment.success_criteria %}
+We pre-registered the following success criteria: {{ experiment.success_criteria | join('; ') }}.
+{% endif %}
+{%- if experiment.threats_to_validity %}
+Threats to validity: {{ experiment.threats_to_validity | join('; ') }}.
+{% endif %}

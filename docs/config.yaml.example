@@ -1,0 +1,196 @@
+# PAI-C 全局配置 — 拷贝到 ~/.paic/config.yaml 后按需编辑。
+# 字段全说明：docs/configuration.md
+# 验配置：`uv run paic info`（看解析结果） / `uv run paic doctor`（看健康度）
+# 改完必须**完全退出 Claude Code 重启**，MCP server 不会热加载。
+
+# ============================================================================
+#  鉴权模式 4 选 1（只列要改的字段；其它保持默认）
+# ============================================================================
+#
+#   A. API Key（默认）         providers.anthropic.mode = api_key
+#                              env: ANTHROPIC_API_KEY
+#
+#   B. Pro/Max 订阅            providers.anthropic.mode = claude_agent_sdk
+#                              routing.fallback = anthropic.api_key   # 可选降级
+#                              前置: `claude login` && `claude --print hi` 通
+#
+#   C. 订阅 + Host（最稳）      在 B 基础上加：
+#                              routing.overrides: { summarize: host }
+#                              # summarize 直接由 Claude Code 主对话做，零 SDK 风险
+#
+#   D. 第三方中转（OpenAI 兼容）providers.openai.mode = compatible
+#                              providers.openai.base_url = <中转站 URL>
+#                              routing.default = openai
+#                              # 注意: 不带 Anthropic prompt caching
+#
+# 详细解释 + 故障排查：docs/configuration.md + docs/troubleshooting.md
+# ============================================================================
+
+
+# --------------------------------------------------------------------------
+#  顶层
+# --------------------------------------------------------------------------
+
+# arxiv-mcp 下载的本地 markdown 路径。默认探：
+#   ~/Documents/arxiv-papers/  →  ~/.arxiv-mcp/papers/
+# 用户路径加在最前；内置默认仍兜底。
+# arxiv_mcp_storage_paths:
+#   - ~/Documents/arxiv-papers/
+
+# Semantic Scholar key：用环境变量 SEMANTIC_SCHOLAR_API_KEY，**不要写 yaml**。
+
+
+# --------------------------------------------------------------------------
+#  Providers
+# --------------------------------------------------------------------------
+
+providers:
+
+  # ---- LLM: Anthropic（必选，除非走 D 模式）----
+  # mode: api_key            → anthropic SDK + ANTHROPIC_API_KEY
+  # mode: claude_agent_sdk   → 复用本机 Claude Code OAuth（订阅，零 API 费）
+  anthropic:
+    mode: api_key
+    model: claude-opus-4-7
+    api_key_env: ANTHROPIC_API_KEY
+    # base_url: https://mytoken.top              # Anthropic 兼容代理（保留 caching）
+
+  # ---- LLM: OpenAI（可选；D 模式必填，否则可整段删）----
+  # mode: api          → 官方 api.openai.com
+  # mode: compatible   → 任何 OpenAI 兼容 endpoint，必填 base_url
+  openai:
+    mode: api
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    # base_url: https://openrouter.ai/api/v1     # OpenRouter
+    # base_url: http://localhost:11434/v1        # Ollama
+    # base_url: http://localhost:8000/v1         # vLLM
+
+  # ---- 命名 profile（可选）：同 provider 不同 model / key / base_url ----
+  # 任意非保留键 + 显式 kind: anthropic|openai 即可。
+  # 保留键: anthropic / openai / arxiv / semantic_scholar / external_search / images
+  # 引用方式: routing.overrides.<node> = <profile_name>[.<mode>]
+  #
+  # openai_pro:                    # ideate 用大模型
+  #   kind: openai
+  #   mode: api
+  #   model: gpt-5.5
+  #   api_key_env: OPENAI_API_KEY
+  #
+  # openai_mini:                   # experiment 用便宜的
+  #   kind: openai
+  #   mode: api
+  #   model: gpt-5.4-mini
+  #   api_key_env: OPENAI_API_KEY
+  #
+  # openai_or:                     # review 走 OpenRouter
+  #   kind: openai
+  #   mode: compatible
+  #   model: claude-opus-4-7
+  #   base_url: https://openrouter.ai/api/v1
+  #   api_key_env: OPENROUTER_API_KEY
+  #
+  # anth_sonnet:                   # 红队 persona 用 Sonnet 增加多样性
+  #   kind: anthropic
+  #   mode: api_key
+  #   model: claude-sonnet-4-6
+  #   api_key_env: ANTHROPIC_API_KEY
+
+  # ---- arxiv MCP 节流（Skill 层 voluntary throttling）----
+  # arxiv 推荐 1 req per 3s。download_paper 内部发 ~2 次 HTTP（HTML+PDF），
+  # 6s pace ≈ 0.33 req/s，对齐推荐值；私网可调小。17 篇 ingest 约 102s。
+  arxiv:
+    batch_size: 1                              # 1 = 严格串行（推荐）
+    inter_batch_delay_sec: 6.0                 # 撞过 429 的私网调到 3.0
+
+  # ---- Semantic Scholar（用于 /paic-search）----
+  # 速率：authenticated 1 req/s，匿名 ~0.33 req/s；客户端会主动节流。
+  semantic_scholar:
+    api_key_env: SEMANTIC_SCHOLAR_API_KEY
+    base_url: https://api.semanticscholar.org/graph/v1
+    timeout_sec: 30.0
+    # rate_limit_per_sec: null                 # null = 自动（有 key=0.95，无 key=0.33）
+
+  # ---- 论文配图（opt-in，Phase 1：teaser / concept / domain raster 图）----
+  # 流程：/paic-figure plan → 用户确认 → /paic-figure generate <slot>
+  # 详见 skills/paic-figure/SKILL.md。架构图用 TikZ、结果图用 matplotlib。
+  images:
+    enabled: false                             # 改 true 才激活 /paic-figure
+    model: gpt-image-1                         # 推荐: generate + edit；dall-e-3 仅 generate
+    api_key_env: OPENAI_API_KEY                # 也可 MYTOKEN_API_KEY 等中转站 key
+    # base_url: https://mytoken.top/v1         # 留空走官方 api.openai.com
+    size: 1024x1024                            # 1024x1024 / 1024x1536 / 1536x1024 / auto
+    quality: high                              # low / medium / high / auto
+
+  # ---- 多平台论文检索（opt-in）----
+  # 接入 PubMed / bioRxiv / OpenAlex / Crossref / IEEE / ACM 等 20+ 平台。
+  # 前置：注册 paper-search-mcp，详见 docs/external-search.md。
+  external_search:
+    enabled: false
+    default_preset: interdisciplinary          # cs_ml | biomed | physics_math |
+                                               # econ_social | engineering | interdisciplinary
+    max_results_per_platform: 10
+    # 各平台节流（秒）；默认 1.0；改后重启 Claude Code。
+    # 仅列与默认 1.0 不同的；其余按需添加。
+    inter_call_delay_sec:
+      pubmed: 0.4                              # NCBI: 3 req/s anon, 10 req/s with key
+      europepmc: 0.4
+      pmc: 0.4
+      crossref: 0.05                           # Polite pool ~50 req/s
+      openalex: 0.1                            # Polite pool ~10 req/s
+      core: 1.5                                # 10 req/min anon
+      zenodo: 0.5
+      ssrn: 5.0                                # Cloudflare 反爬
+      google_scholar: 5.0                      # bot detection；建议配 proxy
+
+
+# --------------------------------------------------------------------------
+#  Routing — 把节点分发到 backend
+# --------------------------------------------------------------------------
+#
+# 已知节点标签：
+#   summarize                                          论文摘要
+#   ideate_brainstorm                                  脑暴 N 个 idea
+#   idea_score_{methodology,novelty,impact,reviewer2}  ideate 4-persona panel
+#   experiment_design                                  实验方案
+#   review_persona_{methodology,statistics,domain,reviewer2}
+#   review_moderator / review_verdict                  review graph
+#   draft_polish / draft_compose                       LaTeX 写作（可走 host）
+#   figure_plan / figure_prompt                        /paic-figure
+#
+# Backend 名（routing.default / fallback / overrides 的值）：
+#   anthropic | openai                                 用 provider 配置的 mode
+#   anthropic.api_key | anthropic.claude_agent_sdk     强制 mode
+#   openai.api | openai.compatible
+#   <profile_name>[.<mode>]                            命名 profile（见 §providers）
+#   host                                               主对话处理；仅 overrides 用，
+#                                                      目前 summarize/draft_* 支持
+
+routing:
+  default: anthropic                           # 全局默认
+  # fallback: anthropic.api_key                # default 抛 LLMUnavailable 时降级
+  overrides: {}
+
+  # ---- 常用 overrides 模板（合并到上面 overrides 即可）----
+  #
+  # 1) 省钱：脑暴用便宜模型，review 留 Claude
+  # overrides:
+  #   ideate_brainstorm: openai
+  #   review_persona_reviewer2: anthropic
+  #
+  # 2) 订阅 + host orchestration（C 模式，零 SDK auth 风险）
+  # overrides:
+  #   summarize: host                          # 摘要直接由主对话做
+  #   draft_polish: host                       # polish 也走主对话（可选）
+  #   draft_compose: host                      # compose 也走主对话（可选）
+  #
+  # 3) ideate panel 多样性（强烈推荐；同 backend 评分高度相关）
+  # overrides:
+  #   idea_score_reviewer2: openai             # 红队走不同 backend 拿到真正 diversity
+  #
+  # 4) 命名 profile：不同节点不同模型（配合 §providers 的 openai_pro / mini / or）
+  # overrides:
+  #   ideate_brainstorm: openai_pro            # 头脑风暴用大模型
+  #   experiment_design: openai_mini           # 实验设计用 mini，便宜十倍
+  #   review_persona_methodology: openai_or    # 评审走 OpenRouter 中转
+  #   review_persona_reviewer2: anth_sonnet    # Sonnet 红队

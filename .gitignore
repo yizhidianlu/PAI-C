@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# uv
+.venv/
+.uv-cache/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Frontend
+node_modules/
+*.tsbuildinfo
+
+# PAI-C runtime artifacts (project-local workspace would live in .paic/, but src repo shouldn't ship one)
+.paic/
+
+# Logs
+*.log
+logs/
+
+# Secrets
+.env
+*.env.local

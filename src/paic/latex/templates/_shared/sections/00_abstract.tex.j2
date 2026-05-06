@@ -1,0 +1,11 @@
+% PAI-C-fill v0.1
+
+\begin{abstract}
+{{ idea.one_liner | trim }}
+{{ idea.motivation | trim }}
+We propose {{ idea.title }}: {{ idea.proposed_approach | trim }}
+{% if experiment.research_questions %}
+We empirically address {{ experiment.research_questions | length }} research question{{ 's' if experiment.research_questions | length > 1 else '' }}, with experiments on {% for ds in experiment.datasets %}\textit{{ '{' }}{{ ds.name }}{{ '}' }}{{ ', ' if not loop.last }}{% endfor %}.
+{% endif %}
+{{ idea.expected_contribution | trim }}
+\end{abstract}

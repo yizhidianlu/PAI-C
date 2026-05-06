@@ -1,0 +1,17 @@
+% PAI-C-fill v0.1
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+% TODO: rewrite. The auto-generated text below is a placeholder.
+
+We presented {{ idea.title }}. {{ idea.expected_contribution | trim }}
+{% if experiment.threats_to_validity %}
+We acknowledge the following limitations: {{ experiment.threats_to_validity | join('; ') }}.
+{% endif %}
+
+% --- Future work ---
+{%- if idea.risk_factors %}
+\paragraph{Limitations and Future Work.}
+{{ idea.risk_factors | join('; ') }}.
+{% endif %}

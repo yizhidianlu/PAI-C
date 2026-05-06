@@ -1,0 +1,22 @@
+% PAI-C-fill v0.1 — replace this with real prose before submission.
+
+\section{Introduction}
+\label{sec:introduction}
+
+% --- Motivation ---
+{{ idea.motivation | trim }}
+
+% --- Position relative to prior work ---
+{% if idea.contrasts_with %}
+Unlike prior work such as {{ idea.contrasts_with | join(', ') }}, our approach \dots
+{% endif %}
+
+% --- Contributions ---
+\paragraph{Contributions.}
+\begin{itemize}
+  \item {{ idea.expected_contribution | trim }}
+  \item {{ idea.novelty_claim | trim }}
+{%- for rq in experiment.research_questions %}
+  \item We empirically address: {{ rq | trim }}.
+{%- endfor %}
+\end{itemize}

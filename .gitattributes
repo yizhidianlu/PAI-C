@@ -1,0 +1,19 @@
+* text=auto eol=lf
+
+# Source files: enforce LF
+*.py    text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+*.j2    text eol=lf
+*.tex   text eol=lf
+*.bib   text eol=lf
+*.lock  text eol=lf
+
+# Binary
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.sqlite binary

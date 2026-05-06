@@ -1,0 +1,16 @@
+% PAI-C-fill v0.1
+
+\section{Related Work}
+\label{sec:related}
+
+% Auto-generated stub — group these citations by theme before submission.
+{% if cited_papers %}
+{%- for grp in cited_papers %}
+\paragraph{{ '{' }}{{ grp.theme }}{{ '}' }}
+{% for paper in grp.papers -%}
+\citet{{ '{' }}{{ paper.cite_key }}{{ '}' }} {{ paper.one_line | default('— TODO: position relative to our work.') }}{{ ' ' }}
+{%- endfor %}
+{% endfor %}
+{% else %}
+TODO: discuss prior work that motivated this paper.
+{% endif %}
