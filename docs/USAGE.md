@@ -79,6 +79,7 @@ ingest 第 X, Y, Z 篇。
 | `/paic-review` | 4-persona 多轮评审（含 rebuttal checkpoint） |
 | `/paic-draft` | LaTeX 写作三阶：`fill` / `polish` / `compose`。内置 `cvpr` / `neurips` / `ieee` + 项目本地自定义模板，见 [custom-templates.md](custom-templates.md)；跑完可选双向同步 Overleaf，见 [overleaf-sync.md](overleaf-sync.md) |
 | `/paic-figure` | 论文配图（Phase 1 raster，opt-in）：`plan` 提议 ≤4 张图位置；`generate` / `edit` / `variant` 逐张生成。仅适合 teaser / concept / domain；架构图用 TikZ、结果图用 matplotlib |
+| `/paic-finalize` | 提交前 paper-level quality gate（8 类检查：cite / TODO / 重复段 / contribution 一致性 / 长度 / unsupported claim / numeric provenance / opt-in LaTeX 编译） |
 | `/paic-resume` | 列出 / 继续未完成的 LangGraph run |
 | `/paic-status` | 项目全景 |
 

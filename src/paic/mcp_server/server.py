@@ -22,6 +22,7 @@ from paic.mcp_server.tools import library as library_tools
 from paic.mcp_server.tools import library_retrieve as library_retrieve_tools
 from paic.mcp_server.tools import pacing as pacing_tools
 from paic.mcp_server.tools import paper_plan as paper_plan_tools
+from paic.mcp_server.tools import quality_gate as quality_gate_tools
 from paic.mcp_server.tools import related_work as related_work_tools
 from paic.mcp_server.tools import review as review_tools
 from paic.mcp_server.tools import revisions as revisions_tools
@@ -432,6 +433,34 @@ def paic_revision_resolve(
     """Mark a RevisionTask ``resolved`` with a one-line summary of the change."""
     return revisions_tools.revision_resolve_tool(
         project_dir, task_id, resolution_summary,
+    )
+
+
+# --- Quality gate (§quality phase 10) --------------------------------------
+
+@mcp.tool()
+def paic_quality_gate_run(
+    project_dir: str,
+    compile_check: bool = False,
+    overrides: list[str] | None = None,
+) -> dict[str, Any]:
+    """Run paper-level preflight before declaring a draft ready.
+
+    Eight checks: ``undefined_cites_refs`` / ``unresolved_todos`` /
+    ``duplicate_paragraphs`` / ``contribution_consistency`` /
+    ``section_length_balance`` / ``unsupported_claims`` /
+    ``numeric_provenance`` / ``latex_compile_warnings`` (opt-in).
+    Returns ``{passed, issue_count, issues, overrides}``. ``passed=true``
+    means no major / blocker severity issues survived (info / minor are
+    informational).
+
+    Use ``overrides=["kind1", "kind2"]`` to silently drop a check the
+    user has explicitly acknowledged (e.g. shipping with TODOs intact).
+    """
+    return quality_gate_tools.quality_gate_run_tool(
+        project_dir,
+        compile_check=compile_check,
+        overrides=overrides,
     )
 
 
