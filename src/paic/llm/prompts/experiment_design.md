@@ -19,7 +19,8 @@ Return a single JSON object with these fields:
   ],
   "proposed_method": "<one detailed paragraph describing the technical method, including any pseudocode-level steps>",
   "metrics": [
-    {"name": "<metric>", "direction": "min|max", "primary": true|false}
+    {"name": "<metric>", "direction": "min|max", "primary": true|false,
+     "success_threshold": <number|null>, "success_threshold_unit": "absolute|relative|percentage points|null"}
   ],
   "ablations": [
     {"factor": "<name>", "levels": ["<level>", "<level>"], "purpose": "<what this ablation tests>"}
@@ -27,13 +28,27 @@ Return a single JSON object with these fields:
   "compute_budget": "<one line, e.g. '8 x A100, 5 days' or 'single A6000, 24h'>",
   "success_criteria": ["<measurable success bar>", ...],
   "threats_to_validity": ["<concrete threat>", ...],
-  "timeline_weeks": <int|null>
+  "timeline_weeks": <int|null>,
+
+  // §quality phase 5 — separable verifier slices.
+  "statistical_plan": [
+    "<seeds: e.g. 5 seeds per cell>",
+    "<significance test: e.g. paired t-test, Bonferroni-corrected for K comparisons>",
+    "<n per group: e.g. 50 evaluation tasks>"
+  ],
+  "reproducibility": [
+    "<random_state pinned: e.g. seed=42 for split, seed_list=[0,1,2,3,4] for runs>",
+    "<config_hash: e.g. config logged via wandb / mlflow run id>",
+    "<version pinning: e.g. torch==2.1.0, cuda==11.8>",
+    "<hardware: e.g. 1x A100 40GB; deterministic mode on>"
+  ]
 }
 ```
 
 Quality bar:
 - Each baseline should be a **named recent method**, not a generic family.
-- Metrics: at least one with `primary: true`.
+- Metrics: at least one with `primary: true`. ``success_threshold`` is a number when the success bar is quantitative ("+2.0" → ``success_threshold: 2.0``, ``success_threshold_unit: "absolute"``).
 - Ablations: at least 2 axes; levels should be the actual values you'd test (e.g. `["1B", "7B", "70B"]`, not "various sizes").
 - Success criteria must be quantitative ("primary metric +2.0 absolute over the strongest baseline at p<0.05").
+- ``statistical_plan`` and ``reproducibility`` MUST be filled — leaving them empty triggers warnings downstream. List 2–4 items each.
 - All output in **English**. Do not include the idea title in the JSON; the caller already has it.

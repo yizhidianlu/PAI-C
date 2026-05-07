@@ -51,6 +51,11 @@ class _DesignFields(BaseModel):
     success_criteria: list[str] = Field(default_factory=list)
     threats_to_validity: list[str] = Field(default_factory=list)
     timeline_weeks: int | None = None
+    # §quality phase 5 — Optional separable concerns. The LLM is asked to
+    # populate them in the same call; verifier nodes downstream check that
+    # they're filled in plausibly.
+    statistical_plan: list[str] = Field(default_factory=list)
+    reproducibility: list[str] = Field(default_factory=list)
 
 
 class ExperimentState(TypedDict, total=False):
@@ -114,6 +119,96 @@ def _propose_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any
     return {"plan": fields.model_dump()}
 
 
+def _verify_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]:
+    """§quality phase 5 — programmatic verification of separable concerns.
+
+    Runs after ``_propose_plan`` and before ``_finalize``. No LLM call:
+    purely deterministic checks producing a list of soft warnings that
+    persist into the experiment yaml's ``validation_warnings`` field.
+    The SKILL surfaces these to the user post-design so they can iterate
+    on the plan before review.
+
+    Concerns checked (one per slice from the phase-5 spec):
+    - ``baseline_retrieve``: every Baseline has ``paper_ref`` set
+    - ``dataset_check``: every Dataset has ``license_note`` and at least
+      one ``splits`` entry
+    - ``metric_select``: at least one metric flagged ``primary=true``
+    - ``ablation_design``: ablations list non-empty and each axis has
+      ≥2 levels
+    - ``compute_feasibility``: ``compute_budget`` non-empty
+    - ``statistical_plan``: ``statistical_plan`` non-empty
+    - ``repro_checklist``: ``reproducibility`` non-empty
+    """
+    plan = state.get("plan") or {}
+    warnings: list[str] = []
+
+    baselines = plan.get("baselines") or []
+    for i, b in enumerate(baselines):
+        if isinstance(b, dict) and not b.get("paper_ref"):
+            warnings.append(
+                f"baseline_retrieve: baseline #{i + 1} '{b.get('name', '?')}' "
+                "has no paper_ref; consider attaching arxiv_id / doi."
+            )
+    if not baselines:
+        warnings.append("baseline_retrieve: no baselines listed.")
+
+    datasets = plan.get("datasets") or []
+    for i, d in enumerate(datasets):
+        if isinstance(d, dict) and not d.get("license_note"):
+            warnings.append(
+                f"dataset_check: dataset #{i + 1} '{d.get('name', '?')}' "
+                "has no license_note; verify usage rights."
+            )
+        if isinstance(d, dict) and not d.get("splits"):
+            warnings.append(
+                f"dataset_check: dataset #{i + 1} '{d.get('name', '?')}' "
+                "has no splits; specify n per train/val/test."
+            )
+    if not datasets:
+        warnings.append("dataset_check: no datasets listed.")
+
+    metrics = plan.get("metrics") or []
+    primary_count = sum(
+        1 for m in metrics if isinstance(m, dict) and m.get("primary")
+    )
+    if primary_count == 0:
+        warnings.append("metric_select: no metric flagged primary=true.")
+    elif primary_count > 1:
+        warnings.append(
+            f"metric_select: {primary_count} metrics flagged primary; "
+            "exactly one is preferred."
+        )
+
+    ablations = plan.get("ablations") or []
+    if not ablations:
+        warnings.append("ablation_design: no ablations listed.")
+    else:
+        for i, a in enumerate(ablations):
+            levels = (a.get("levels") or []) if isinstance(a, dict) else []
+            if len(levels) < 2:
+                warnings.append(
+                    f"ablation_design: ablation #{i + 1} "
+                    f"'{a.get('factor', '?')}' has <2 levels."
+                )
+
+    if not (plan.get("compute_budget") or "").strip():
+        warnings.append("compute_feasibility: compute_budget is empty.")
+
+    if not plan.get("statistical_plan"):
+        warnings.append(
+            "statistical_plan: missing — specify seeds, n, significance test, "
+            "multiple-comparison correction."
+        )
+
+    if not plan.get("reproducibility"):
+        warnings.append(
+            "repro_checklist: missing — specify random_state, config_hash, "
+            "version pinning, hardware spec."
+        )
+
+    return {"plan": {**plan, "validation_warnings": warnings}}
+
+
 def _finalize(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]:
     experiment_id = str(ULID())
     plan_data = state["plan"]
@@ -131,6 +226,9 @@ def _finalize(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]:
         success_criteria=plan_data.get("success_criteria", []),
         threats_to_validity=plan_data.get("threats_to_validity", []),
         timeline_weeks=plan_data.get("timeline_weeks"),
+        statistical_plan=plan_data.get("statistical_plan", []),
+        reproducibility=plan_data.get("reproducibility", []),
+        validation_warnings=plan_data.get("validation_warnings", []),
         created_at=datetime.now(UTC),
         parent_run_id=state.get("run_id"),
         status="draft",
@@ -151,11 +249,13 @@ def build_experiment_graph(deps: ExperimentDeps):
     g = StateGraph(ExperimentState)
     g.add_node("load_idea", lambda s: _load_idea(s, deps))
     g.add_node("propose_plan", lambda s: _propose_plan(s, deps))
+    g.add_node("verify_plan", lambda s: _verify_plan(s, deps))
     g.add_node("finalize", lambda s: _finalize(s, deps))
 
     g.add_edge(START, "load_idea")
     g.add_edge("load_idea", "propose_plan")
-    g.add_edge("propose_plan", "finalize")
+    g.add_edge("propose_plan", "verify_plan")
+    g.add_edge("verify_plan", "finalize")
     g.add_edge("finalize", END)
 
     return g.compile(checkpointer=get_checkpointer(deps.paths))

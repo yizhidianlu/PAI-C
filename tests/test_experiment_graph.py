@@ -131,3 +131,151 @@ def test_dataset_splits_int_passthrough():
         "splits": {"train": 1281167, "val": 50000},
     })
     assert d.splits == {"train": 1281167, "val": 50000}
+
+
+# --------------------------------------------------------- §quality phase 5
+
+
+class _FullStubLLM:
+    """LLM stub that returns a phase-5-complete plan."""
+
+    model = "stub-full"
+
+    def complete_json(self, *, system, user, schema, max_tokens=4096, temperature=0.0, node=None):
+        from paic.graphs.experiment_graph import _DesignFields
+        from paic.schemas.experiment import (
+            AblationAxis,
+            Baseline,
+            Dataset,
+            Metric,
+        )
+
+        return _DesignFields(
+            research_questions=["q?"],
+            hypotheses=["h"],
+            datasets=[Dataset(
+                name="BCI-IV-2a", rationale="standard",
+                splits={"train": 7, "test": 1},
+                license_note="CC-BY-NC",
+            )],
+            baselines=[Baseline(name="CSP", why="canonical", paper_ref="2010.csp")],
+            proposed_method="Method.",
+            metrics=[Metric(name="acc", direction="max", primary=True,
+                            success_threshold=2.0, success_threshold_unit="absolute")],
+            ablations=[AblationAxis(
+                factor="lr", levels=["1e-3", "1e-4"], purpose="sensitivity",
+            )],
+            compute_budget="1xA100",
+            success_criteria=["+2.0% at p<0.05"],
+            threats_to_validity=["session leakage"],
+            timeline_weeks=4,
+            statistical_plan=["5 seeds", "paired t-test", "Bonferroni-corrected"],
+            reproducibility=["seed=42", "config logged via wandb", "torch==2.1.0"],
+        )
+
+
+def test_phase5_clean_plan_has_no_warnings(project_with_idea):
+    out = experiment_start(str(project_with_idea), "idea_test", llm=_FullStubLLM())
+    assert out["status"] == "done"
+    yaml_path = project_with_idea / ".paic/experiments" / f"{out['experiment_id']}.yaml"
+    from paic.workspace.store import load_yaml
+    plan = load_yaml(yaml_path)
+    assert plan["validation_warnings"] == []
+    assert plan["statistical_plan"] == ["5 seeds", "paired t-test", "Bonferroni-corrected"]
+    assert plan["reproducibility"] == ["seed=42", "config logged via wandb", "torch==2.1.0"]
+    assert plan["metrics"][0]["success_threshold"] == 2.0
+
+
+def test_phase5_legacy_plan_emits_warnings(project_with_idea):
+    """The pre-phase-5 stub has no statistical_plan / reproducibility / license /
+    paper_ref. Verifier must surface warnings for each missing slice."""
+    out = experiment_start(str(project_with_idea), "idea_test", llm=_StubExperimentLLM())
+    yaml_path = project_with_idea / ".paic/experiments" / f"{out['experiment_id']}.yaml"
+    from paic.workspace.store import load_yaml
+    plan = load_yaml(yaml_path)
+    warnings = plan["validation_warnings"]
+    kinds = {w.split(":")[0] for w in warnings}
+    assert "baseline_retrieve" in kinds  # ResNet-50 has no paper_ref
+    assert "dataset_check" in kinds      # ImageNet has no license_note + no splits
+    assert "statistical_plan" in kinds
+    assert "repro_checklist" in kinds
+
+
+def test_phase5_metric_warns_on_no_primary():
+    from paic.graphs.experiment_graph import _verify_plan
+    plan = {
+        "baselines": [{"name": "x", "paper_ref": "y"}],
+        "datasets": [{"name": "x", "license_note": "MIT", "splits": {"train": 1}}],
+        "metrics": [{"name": "acc", "direction": "max", "primary": False}],
+        "ablations": [{"factor": "x", "levels": ["a", "b"], "purpose": "y"}],
+        "compute_budget": "x",
+        "statistical_plan": ["x"],
+        "reproducibility": ["x"],
+    }
+    out = _verify_plan({"plan": plan}, deps=None)
+    warnings = out["plan"]["validation_warnings"]
+    assert any("metric_select" in w and "primary" in w for w in warnings)
+
+
+def test_phase5_metric_warns_on_multiple_primary():
+    from paic.graphs.experiment_graph import _verify_plan
+    plan = {
+        "baselines": [{"name": "x", "paper_ref": "y"}],
+        "datasets": [{"name": "x", "license_note": "MIT", "splits": {"train": 1}}],
+        "metrics": [
+            {"name": "a", "direction": "max", "primary": True},
+            {"name": "b", "direction": "max", "primary": True},
+        ],
+        "ablations": [{"factor": "x", "levels": ["a", "b"], "purpose": "y"}],
+        "compute_budget": "x",
+        "statistical_plan": ["x"],
+        "reproducibility": ["x"],
+    }
+    out = _verify_plan({"plan": plan}, deps=None)
+    warnings = out["plan"]["validation_warnings"]
+    assert any("metric_select" in w and "2 metrics" in w for w in warnings)
+
+
+def test_phase5_ablation_warns_on_too_few_levels():
+    from paic.graphs.experiment_graph import _verify_plan
+    plan = {
+        "baselines": [{"name": "x", "paper_ref": "y"}],
+        "datasets": [{"name": "x", "license_note": "MIT", "splits": {"train": 1}}],
+        "metrics": [{"name": "a", "direction": "max", "primary": True}],
+        "ablations": [{"factor": "x", "levels": ["a"], "purpose": "y"}],  # 1 level
+        "compute_budget": "x",
+        "statistical_plan": ["x"],
+        "reproducibility": ["x"],
+    }
+    out = _verify_plan({"plan": plan}, deps=None)
+    warnings = out["plan"]["validation_warnings"]
+    assert any("ablation_design" in w and "<2 levels" in w for w in warnings)
+
+
+def test_phase5_metric_success_threshold_round_trip():
+    """Metric.success_threshold persists through the schema."""
+    from paic.schemas.experiment import Metric
+    m = Metric(name="acc", direction="max", primary=True,
+               success_threshold=3.5, success_threshold_unit="percentage points")
+    dumped = m.model_dump(mode="json")
+    reloaded = Metric.model_validate(dumped)
+    assert reloaded.success_threshold == 3.5
+    assert reloaded.success_threshold_unit == "percentage points"
+
+
+def test_phase5_experiment_plan_default_lists_empty():
+    """Phase-5 fields default to [] so legacy yaml files without them load fine."""
+    from paic.schemas.experiment import ExperimentPlan
+    minimal = {
+        "id": "e1", "idea_id": "i1",
+        "research_questions": [], "hypotheses": [],
+        "datasets": [], "baselines": [],
+        "proposed_method": "x",
+        "metrics": [], "ablations": [],
+        "success_criteria": [], "threats_to_validity": [],
+        "created_at": "2024-01-01T00:00:00+00:00",
+    }
+    plan = ExperimentPlan.model_validate(minimal)
+    assert plan.statistical_plan == []
+    assert plan.reproducibility == []
+    assert plan.validation_warnings == []

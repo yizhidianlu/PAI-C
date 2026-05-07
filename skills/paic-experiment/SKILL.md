@@ -19,15 +19,25 @@ allowed-tools: mcp__paic__paic_experiment_start, mcp__paic__paic_workspace_statu
    - Watch for `error: llm_unavailable` → tell user to set `ANTHROPIC_API_KEY`.
 4. Read the produced YAML (`experiment_path` field in the response) and render a Chinese summary:
    - **研究问题** / **假设**
-   - **数据集** + 选择理由
-   - **基线方法** + 为什么选它们
+   - **数据集** + 选择理由 + license_note
+   - **基线方法** + 为什么选它们 + paper_ref（如果有）
    - **核心方法**（保留英文段落原文）
-   - **评估指标**（标注 primary）
+   - **评估指标**（标注 primary，列 success_threshold）
    - **消融实验轴**
    - **算力预算 / 时间表**
    - **成功判据**
    - **威胁** （threats to validity）
-5. End with: "下一步：`/paic-review <experiment_id>` 让 4 位评审 agent 审稿。"
+   - **统计计划** (statistical_plan) — seeds / 显著性检验 / multiple-comparison 处理
+   - **可重复性** (reproducibility) — random_state / config_hash / 版本钉死 / 硬件
+5. **§quality phase 5 — 验证警告**：检查 `validation_warnings` 字段。**非空**时一行一个渲染：
+   ```
+   ⚠ baseline_retrieve: ResNet-50 缺 paper_ref；建议附 arxiv_id / doi
+   ⚠ dataset_check: ImageNet 缺 license_note
+   ⚠ statistical_plan: 缺 seeds / 显著性检验 / multiple-comparison
+   ...
+   ```
+   告诉用户用 `paic_experiment_start` 重跑（带更明确的 constraints）或手改 yaml。
+6. End with: "下一步：`/paic-review <experiment_id>` 让 4 位评审 agent 审稿。"
 
 ## Style
 - 中文叙述，英文术语保留（"baseline"、"ablation"、"primary metric" 等）。

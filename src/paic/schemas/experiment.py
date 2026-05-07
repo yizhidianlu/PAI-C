@@ -50,6 +50,12 @@ class Metric(BaseModel):
     name: str
     direction: MetricDirection
     primary: bool = False
+    # §quality phase 5 — quantitative success bar attached directly to
+    # the metric so quality_gate (phase 10) can check that a numeric
+    # claim about this metric has provenance.
+    success_threshold: float | None = None
+    success_threshold_unit: str | None = None
+    """e.g. ``"absolute"`` / ``"relative"`` / ``"percentage points"``."""
 
 
 class AblationAxis(BaseModel):
@@ -72,6 +78,21 @@ class ExperimentPlan(BaseModel):
     success_criteria: list[str] = Field(default_factory=list)
     threats_to_validity: list[str] = Field(default_factory=list)
     timeline_weeks: int | None = None
+    # §quality phase 5 — separable verification slices.
+    statistical_plan: list[str] = Field(default_factory=list)
+    """Pre-registration-style statistical commitments: seeds count,
+    significance test, multiple-comparison correction, n per group, etc."""
+
+    reproducibility: list[str] = Field(default_factory=list)
+    """Reproducibility checklist items: random_state, config_hash, version
+    pinning, hardware spec, deterministic-mode flag, etc."""
+
+    validation_warnings: list[str] = Field(default_factory=list)
+    """Soft warnings produced by the post-LLM verifier nodes (baseline
+    without paper_ref, dataset without license, no primary metric, etc).
+    Empty list = clean plan; non-empty = caller / SKILL should surface
+    these to the user."""
+
     created_at: datetime
     parent_run_id: str | None = None
     status: ExperimentStatus = "draft"
