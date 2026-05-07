@@ -179,11 +179,24 @@ def discover_templates(paths: ProjectPaths) -> list[TemplateRecord]:
 def resolve_template(name: str, paths: ProjectPaths) -> TemplateRecord:
     """Return the active template record for ``name``.
 
-    Project-local takes precedence. Raises ``TemplateNotFound`` with the list
-    of available names so the MCP tool can surface a helpful error.
+    Lookup is **case-insensitive**: a user typing ``AAAI`` matches a template
+    directory named ``aaai`` (and vice versa). The actual on-disk directory
+    name is preserved in the returned record's ``name`` / ``root``, so static
+    asset paths still resolve on case-sensitive filesystems.
+
+    Project-local takes precedence on collision. Raises ``TemplateNotFound``
+    with the list of available names so the MCP tool can surface a helpful
+    error.
     """
     records = discover_templates(paths)
+    # Exact match wins (preserves intent when user/builtin templates differ
+    # only in case — possible on case-sensitive filesystems).
     for rec in records:
         if rec.name == name:
+            return rec
+    # Case-insensitive fallback so `AAAI` resolves to a `aaai/` directory.
+    name_lower = name.lower()
+    for rec in records:
+        if rec.name.lower() == name_lower:
             return rec
     raise TemplateNotFound(name=name, available=[r.name for r in records])

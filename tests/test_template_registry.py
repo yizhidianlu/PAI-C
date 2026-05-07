@@ -165,6 +165,42 @@ def test_resolve_template_not_found_lists_available(project):
     assert "does-not-exist" not in exc_info.value.available
 
 
+def test_resolve_template_case_insensitive_user(project):
+    """User types `AAAI` but their directory is `aaai` — should resolve.
+
+    Common pitfall: user reads "AAAI 2026" in their submission email, types
+    `--template AAAI` but their template directory is lowercase `aaai`.
+    """
+    _make_user_template(project, "aaai")
+    rec = resolve_template("AAAI", project)
+    assert rec.name == "aaai"  # actual directory case preserved
+    assert rec.kind == "user"
+
+
+def test_resolve_template_case_insensitive_builtin(project):
+    """Built-in templates also resolve case-insensitively."""
+    rec = resolve_template("NeurIPS", project)
+    assert rec.name == "neurips"
+    assert rec.kind == "builtin"
+
+
+def test_resolve_template_exact_match_preferred_over_case_insensitive(project, monkeypatch):
+    """If two records differ only in case (rare on case-sensitive FS), exact match wins.
+
+    We can't reliably create both `aaai/` and `AAAI/` on case-insensitive FSes
+    (Windows / default macOS), so we fake the discovery output instead.
+    """
+    from paic.latex.registry import TemplateRecord
+
+    fake_records = [
+        TemplateRecord(name="aaai", kind="user", root=project.templates_dir / "aaai"),
+        TemplateRecord(name="AAAI", kind="user", root=project.templates_dir / "AAAI"),
+    ]
+    monkeypatch.setattr("paic.latex.registry.discover_templates", lambda paths: fake_records)
+    rec = resolve_template("AAAI", project)
+    assert rec.name == "AAAI"  # exact match wins over case-insensitive fallback
+
+
 def test_shared_sections_root_exists():
     root = shared_sections_root()
     assert (root / "sections" / "00_abstract.tex.j2").is_file()

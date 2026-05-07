@@ -30,10 +30,14 @@ PAI-C ships LaTeX support in **3 stages** — all live now:
    - `kind` is `builtin` (cvpr / neurips / ieee, ship in PAI-C) or `user` (under `<project>/.paic/templates/<name>/`).
    - `overrides_builtin: true` means a user template shadows a same-named built-in.
 
-3. **Resolve the template name**:
-   - If the user already specified one and it's in the list → use it.
-   - If the user said "give me a template" / didn't name one → list every entry as a numbered Chinese menu and ask. Show `display_name` (or `name` if absent), `kind`, and any `target_venue` annotation.
-   - If the user said "我想用 ICLR / Nature / TPAMI / ..." and no matching template exists → see step 4 (scaffold path).
+3. **Resolve the template name**（**大小写不敏感**——`AAAI` 等同于 `aaai`，`NeurIPS` 等同于 `neurips`，按 lowercase 比对）:
+   - 用户给了名字、且 list 里有（按 lowercase 匹配）→ 用它。
+   - 用户没给名字 / 说「给我模板」→ 按 `kind=user` 在前、`builtin` 在后分组，列成中文编号菜单让用户选；显示 `display_name`（或 `name`）+ `target_venue` 注解。
+   - 用户给了名字、list 里没有 → **不要直接 scaffold**。先把当前可用列表（按 kind 分组）展示给用户，再给三选一菜单：
+     - **(a) 用现有的某个**（builtin 或 user）：让用户告诉你用哪个。
+     - **(b) Scaffold 一个新的 `<name>`**：进 step 4——基于 cvpr / neurips / ieee 之一派生骨架到 `.paic/templates/<name>/`，**之后用户必须手动改 `\usepackage{...}` + 拷贝 venue 官方 `.sty` / `.cls` / `.bst`**（详见 step 4）。
+     - **(c) 用户已经手动放了模板**：去 `<project>/.paic/templates/<目录名>/` 检查 `main.tex.j2` 在不在；放好后让用户重 fill 一次（**自动识别，不需要先注册**；目录名大小写都行）。`paic_draft_list_templates` 还是没有 → 大概率是缺 `main.tex.j2` 或目录以 `.` 开头被忽略。
+   - 用户选 (a) → 跳到 step 5 用选定的；(b) → 进 step 4；(c) → 等用户确认后从 step 2 重跑（重 list_templates）。
 
 4. **(Optional) Scaffold a new template** when the user wants a venue PAI-C doesn't ship:
    ```
@@ -212,7 +216,7 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
 和 polish 一样，重 compose 同一 section 是合法的（每次新备份）。常见用法：先 `from_scratch` 起初稿，看 diff 不满意 → 加 `instruction="paragraph 1 多举例; paragraph 2 改成 2-column 表格"` 重 compose。
 
 ## Error handling — fill / scaffold
-- `error: unknown_template` → 响应里有 `available` 列表 + `hint`。把列表展示给用户、提示也可以用 scaffold 派生。
+- `error: unknown_template` → 响应里 `available` 是 `[{name, kind, display_name}, ...]` 的对象列表，`got` 是用户传入的原名字。**按 kind 分组渲染**（先 user 后 builtin），再把 step 3 的 (a)/(b)/(c) 菜单复述给用户；特别提一句「名字大小写不敏感（`AAAI` 等同于 `aaai`），如果你已经在 `.paic/templates/<name>/` 放了 `main.tex.j2`、确认目录名拼写后重 fill 即可」。**不要默认 scaffold**——这是上一版常见的过度热情。
 - `error: not_found` → 提示先 `/paic-experiment <idea_id>` 或检查 idea_id。
 - `error: project_not_initialized` → 先 `/paic-init`。
 - `error: template_already_exists`（来自 scaffold）→ 提示用户换名字或先 `rm -rf .paic/templates/<name>`。
