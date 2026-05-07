@@ -2,6 +2,12 @@
 
 `git pull` 后让改动生效——按改动类型决定动作。
 
+> ⚠ **必须重启 Claude Code，否则新功能静默失效**
+>
+> MCP server 是 Claude Code 启动时拉起的 Python 子进程，**不会**自动 reload。如果 `git pull` 后**不重启**：新增 MCP 工具不暴露（调用直接 method-not-found）；schema 新字段被 pydantic 默默 strip（YAML 持久文件只剩旧字段，下游一致性检查永远 0 命中）；compose 新 mode 不可用——**而且全程没有错误提示**。
+>
+> 「重启」= **任务管理器中无 `Claude` 进程残留**——`/clear` 不算、切窗口不算、最小化不算。Mac/Linux 用 `ps aux | grep claude` 确认。
+
 ---
 
 ## 标准流程（覆盖 80% 场景）
@@ -10,10 +16,14 @@
 cd <PAI-C 仓库>
 git pull
 uv run python scripts/install_skills.py     # 同步 SKILL.md 到 ~/.claude/skills/
-# 完全退出 Claude Code，重新打开
+# 完全退出 Claude Code，重新打开（见上方红框）
 ```
 
-> **完全退出**指任务管理器中无 `Claude` 进程残留——非 `/clear`、非切换窗口。MCP server 是 Claude Code 启动时拉起的子进程，仅完全退出 + 重开会重新加载新代码。
+### 验证新工具是否真的暴露了
+
+重启后，跑 `uv run paic doctor` 看 `mcp tools exposed: <count>` 这一行。如果数字异常（远低于源码里 `@mcp.tool()` 装饰器数），说明 server 没刷新——再次完全退出。
+
+或在 Claude Code 里直接试调一个新工具（例如 `paic_search_recall_check` / `paic_paper_plan_status` / `quality_gate_run_tool`）；method-not-found 即重启失败。
 
 ---
 

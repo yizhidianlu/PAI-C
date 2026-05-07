@@ -644,10 +644,26 @@ def paic_summarize_persist(
 ) -> dict[str, Any]:
     """Persist a host-generated PaperSummary to disk (LLM-free).
 
-    Validates ``structured`` against the summary schema (problem / method /
-    key_results / limitations / techniques + optional relevance_to_project)
-    and writes the same ``library/summaries/<paper_id>.{md,yaml}`` pair as
-    ``paic_summarize_run``.
+    Validates ``structured`` against the summary schema and writes the same
+    ``library/summaries/<paper_id>.{md,yaml}`` pair as ``paic_summarize_run``.
+
+    Schema fields (see ``paic.schemas.paper.PaperSummary``):
+
+    - **legacy core (always required at value-level)**: ``problem`` / ``method``
+    - **legacy lists (default empty)**: ``key_results`` / ``limitations`` /
+      ``techniques`` / optional ``relevance_to_project``
+    - **paper-quality phase 3 (Optional, all default empty)**:
+      ``contribution_type`` / ``datasets`` / ``baselines`` / ``metrics`` /
+      ``numeric_results`` / ``assumptions`` / ``failure_modes`` /
+      ``open_questions`` / ``citation_claims`` / ``quote_spans``
+
+    The phase-3 fields are consumed downstream by the quality gate
+    (``unsupported_claims``, ``numeric_provenance``) — if they're empty the
+    corresponding checks degrade silently. Populate them when feasible.
+
+    ``paper_id`` accepts any of: cite_key (slug form, e.g.
+    ``arxiv_2102_09050`` / ``doi_10_1088_1741_2552_ad504a``), raw arxiv_id,
+    raw DOI, raw s2_id, or any value in the paper's ``external_ids`` map.
 
     Companion to ``paic_summarize_run`` in host orchestration mode: when the
     main Claude Code conversation has finished generating the structured
@@ -709,13 +725,26 @@ def paic_experiment_start(
 ) -> dict[str, Any]:
     """Design an ExperimentPlan for an existing IdeaCard.
 
-    Reads ``ideas/<idea_id>.yaml``, asks Claude to fill the experiment schema
-    (research questions / hypotheses / datasets / baselines / proposed_method /
-    metrics / ablations / compute_budget / success_criteria), and writes
-    ``experiments/<experiment_id>.yaml``.
+    Reads ``ideas/<idea_id>.yaml``, asks Claude to fill the experiment schema,
+    runs the deterministic ``_verify_plan`` node to flag soft warnings, and
+    writes ``experiments/<experiment_id>.yaml``.
+
+    Schema fields (see ``paic.schemas.experiment.ExperimentPlan``):
+
+    - **core**: research_questions / hypotheses / datasets / baselines /
+      proposed_method / metrics / ablations / compute_budget /
+      success_criteria / threats_to_validity / timeline_weeks
+    - **paper-quality phase 5**:
+        - ``metrics[*].success_threshold`` — numeric pass bar per metric
+        - ``statistical_plan`` — primary endpoint, seeds, multiplicity
+          correction, paired-test family
+        - ``reproducibility`` — seed list, hardware, library versions, public
+          dataset URLs
+        - ``validation_warnings[]`` — soft warnings emitted by the verifier
+          when phase-5 fields are missing or thin (does not block design)
 
     ``constraints`` is an optional free-form dict (compute, deadline, allowed
-    datasets) the LLM should respect when designing the plan.
+    datasets, venue_target) the LLM should respect when designing the plan.
     """
     return experiment_tools.experiment_start(project_dir, idea_id, constraints=constraints)
 
@@ -800,7 +829,9 @@ def paic_draft_fill(
     Use ``paic_draft_list_templates`` for the same listing without
     triggering an error.
 
-    v0.2 will add ``paic_draft_polish``; v0.3 will add ``paic_draft_compose``.
+    Companion tools (already shipping): ``paic_draft_polish`` (per-section
+    LLM rewrite) and ``paic_draft_compose`` (full-section compose with
+    library cite-key whitelist).
     """
     return draft_tools.draft_fill_tool(
         project_dir, template, idea_id, experiment_id=experiment_id
@@ -1108,14 +1139,31 @@ def paic_figure_plan(
     """Analyze paper context and propose ≤ ``max_figures`` figure slots.
 
     Reads a polished LaTeX draft when ``draft_path`` is given; otherwise
-    falls back to the project's idea + experiment YAMLs. The proposed plan
-    (slot, kind, section_hint, position_hint, scene_description,
-    caption_hint, rationale) is written to ``.paic/figures/_plan.yaml``.
+    falls back to the project's idea + experiment YAMLs. ``draft_path``
+    must point to a single ``.tex`` file (e.g.
+    ``.paic/drafts/sections/02_related.tex`` or ``.paic/drafts/main.tex``);
+    passing a directory returns ``error: "draft_path_must_be_file"``.
+
+    The proposed plan (slot, kind, section_hint, position_hint,
+    scene_description, caption_hint, rationale) is written to
+    ``.paic/figures/_plan.yaml``.
+
+    Per-slot fields (see ``paic.images.planner.FigureSlot``):
+
+    - **core**: slot / kind / section_hint / position_hint /
+      scene_description / caption_hint / rationale
+    - **paper-quality phase 9 (claim binding)**:
+        - ``supporting_claims[]`` — claim ids from
+          ``plans/claims.yaml`` that the figure visually supports
+        - ``no_visual_reason`` — populated when a contribution has no
+          dedicated figure (allowed when supported by table / algorithm)
+    - **plan-level**: ``coverage_warnings[]`` — emitted by
+      ``verify_claim_coverage`` when a contribution is left without
+      figure / table / algorithm binding and without ``no_visual_reason``
 
     AI image generators are bad at architecture diagrams, plots, and text
     rendering, so the planner only proposes raster-friendly figures
-    (teaser / concept / domain). Returns the plan body so the caller can
-    render it without a separate file read.
+    (teaser / concept / domain).
 
     Refuses to clobber an existing plan unless ``overwrite=True``.
     """

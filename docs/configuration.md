@@ -365,7 +365,21 @@ routing overrides:
 - 你想看到 Claude 的推理过程在主对话里 transparent
 - 你已经在为主对话付费（订阅），不想多走一层 SDK 链路
 
-**当前覆盖**：仅 `summarize` 节点。`ideate` / `experiment` / `review` 仍需配置 backend。
+### 支持 host 的节点（白名单）
+
+`host` **只能**在 `routing.overrides` 中给以下节点使用——其他节点 host 无实现，graph 跑到时会抛 `HostOrchestrationRequired` 而**不是**优雅 fallback：
+
+| 节点 | 状态 |
+|---|---|
+| `summarize` | ✓ 支持 |
+| `draft_polish` | ✓ 支持 |
+| `draft_compose` | ✓ 支持 |
+| `review_persona_*` / `review_moderator` / `review_verdict` | ✗ **不支持**——配置后 review graph 会 crash |
+| `ideate_brainstorm` / `idea_score_*` | ✗ **不支持** |
+| `experiment_design` | ✗ **不支持** |
+| `figure_plan` / `figure_prompt` | ✗ **不支持** |
+
+> Server 启动时**不**校验 `routing.overrides` 里 host 的合法性——配错只在 graph 实际跑到该节点时才崩。所以请仔细按白名单配。`paic doctor` 未来会加这一行校验。
 
 ### 配置
 
