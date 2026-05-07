@@ -28,6 +28,18 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 
 3. **顺序下载（按平台路由）** —— 每篇按其 `platform` / 标识符走对应的下载工具，把文件落到 `<project>/.paic/library/pdfs/<display_basename>.<ext>`（人类可读：序号_标题；如 `001_attention_is_all_you_need.pdf`）。
 
+   **3.0a 先批量注册 metadata**（**必须在 step 3.0 / 3.1 下载循环之前做**）：
+
+   ```
+   mcp__paic__paic_library_add(project_dir=<cwd>, papers=[<本批所有 paper dicts>], tags=[...])
+   ```
+
+   原因：`paic_library_attach_paper`（step 3.1 在循环里反复调）回写 `pdf_local_path` 字段时，**仅当 paper 已在 `selected.yaml`** 才生效（否则 silently 跳）；如果把 `library_add` 放在循环之后，每次 attach 写 pdf_local_path 都是 no-op，selected.yaml 最终只有 metadata 没有 pdf_local_path → `/paic-summarize` 失去优先定位字段，回退到 cite_key 兼容路径，**ingest 用 display_name（`001_xxx.pdf`）时找不到文件**触发 `paper_markdown_not_found`。
+
+   library_add 是 idempotent（按 arxiv_id / doi / s2_id 去重），首次跑写盘所有论文；重 ingest 时 `skipped_duplicates` 会把已存在的捞出来，本批 attach 仍能找到 entry 写 pdf_local_path。
+
+   不向用户渲染任何输出（这一步是技术细节，结果的 `library_count` / `papers_without_pdf` 会在 step 4 summary 里一起报）。
+
    **3.0 预检（在循环开始之前做一次）**：
    - 统计待下载论文里**会走 `download_with_fallback`** 的篇数（即下面路由表第 3、4 行 — `openalex` / `crossref` / DOI-only 的论文）。
    - 如果 ≥1 篇要走 fallback，提醒用户一句中文：「本批有 N 篇会走 `download_with_fallback`（Unpaywall + Crossref），需要 `UNPAYWALL_EMAIL` 环境变量；如果没设过，多数 PDF 拿不到。要先去 set 环境变量再重启 Claude Code，还是直接跑（缺的进 'unpaywall_email_missing' 跳过列表）？」
@@ -133,7 +145,7 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
    - **`download_acm` NotImplementedError** → 不是配置错误；ACM 没有官方 PDF API。SKILL 路由表已经把 ACM 直接指向 `download_with_fallback`，正常情况你不会调到这个工具。如果误调了直接当作 "未下载（acm_no_api）" 处理。
    - **`download_with_fallback` 抛 `'int' object has no attribute 'strip'`** → 上游 paper-search-mcp 解析某些 crossref / europepmc metadata 时把整数字段当字符串 `.strip()`，间歇报错（约 1/4 fallback 命中）。**与 `use_scihub` / `UNPAYWALL_EMAIL` 无关、无解、不要 retry**，标 "未下载（download_with_fallback_int_bug）" 跳过即可。
 
-   全部下载结束后**一次性**调 `mcp__paic__paic_library_add(project_dir=<cwd>, papers=[...], tags=[...])` 注册所有论文（library_add 不打网络，可以一次性传整批）。
+   metadata 已在 step 3.0a 批量注册，循环里**不要再调** `paic_library_add`。每篇 download → attach 完成时，attach 会找到 selected.yaml 里已有的 entry 并回写 `pdf_local_path`。重新 ingest 同一篇时 attach 是 idempotent，会更新到最新 `pdf_local_path`。
 
    **3a. 429 retry 流程**（任何 platform 撞限流时通用）：
    1. arxiv 用 `mcp__paic__paic_arxiv_pace(seconds=20)`；其它平台用 `mcp__paic__paic_search_pace(platform="<platform>", seconds=20)`
