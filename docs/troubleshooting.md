@@ -57,15 +57,9 @@ uv sync
 
 ### `arxiv pacing`
 
-总是 `[OK]`，消息形如 `batch=1 | delay=6.0s | upstream_throttling=unenforced`：
+总是 `[OK]`，消息形如 `batch=1 | delay=6.0s | upstream_throttling=unenforced`。字段语义、默认值由来、调档参考表见 [configuration.md → arxiv MCP 节流](configuration.md#arxiv-mcp-节流)。
 
-- `batch=N` — Skill 提示 Claude 一次最多并发的 arxiv 调用数（默认 1）
-- `delay=Xs` — `paic_arxiv_pace()` 默认 sleep 时长（默认 6.0s）
-- `upstream_throttling=unenforced` — 提示上游 arxiv MCP 自身**不**做下载/读取节流，本地 pacing 是唯一防线
-
-> 默认值是 **6s**：`mcp__arxiv__download_paper` 单次调用内部发 ~2 次 HTTP（HTML probe + PDF），3s pace 实测 4 篇就撞 429。若的 yaml 里显式写了 `inter_batch_delay_sec: 3.0` 又撞了 429，删掉这行回到默认。
-
-值与你期待的不一致？检查 `~/.paic/config.yaml` 的 `providers.arxiv` 块；详见 [configuration.md → arxiv MCP 节流](configuration.md#arxiv-mcp-节流)。
+值与期待不一致 → 检查 `~/.paic/config.yaml` 的 `providers.arxiv` 块。撞 429 见下方 [arxiv MCP 429 / 软封 IP](#arxiv-mcp-429--软封-ip)。
 
 ### `semantic scholar`
 
@@ -193,9 +187,7 @@ providers:
 
 症状：批量 `/paic-ingest`（甚至 4-5 篇就可能撞）或 `/paic-summarize all` 触发 fallback 时，`mcp__arxiv__download_paper` / `read_paper` 报 429 / `Too Many Requests` / `connection reset by peer`，或后续请求挂 60 秒。
 
-**架构限制**：PAI-C MCP 不在 arxiv 调用路径上（Skill 让 Claude 直调 `mcp__arxiv__*`），无法 server-side 拦截。节流由 Skill 通过 `mcp__paic__paic_arxiv_pace` 自愿协作。详见 [configuration.md → arxiv MCP 节流](configuration.md#arxiv-mcp-节流)。
-
-**根因**：`mcp__arxiv__download_paper` 单次调用内部发**多次 HTTP 请求**——先 probe HTML 元数据再退回 PDF。3s pace 实际命中频率 ~0.67 req/s，是 arxiv 限速（1 req/3s = 0.33）的 2 倍。当前默认是 **6s**。
+**根因 + 架构**：见 [configuration.md → arxiv MCP 节流](configuration.md#arxiv-mcp-节流)。简言之上游 arxiv MCP 不做客户端节流，本地 `paic_arxiv_pace` 是唯一防线；默认 6s 是因为单次 `download_paper` 内部 ~2 次 HTTP，3s pace 实际 ~0.67 req/s 已超 arxiv 限速。
 
 **修复顺序**：
 

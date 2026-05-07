@@ -50,7 +50,7 @@
 
 1. **长上下文要不要**：`summarize` / `relwork_cluster` / `draft_*` / `section_coherence_polish` 吃 ≥ 30K tok 输入。Sonnet / Haiku / GPT-5.4-mini 上下文够用，但 schema-heavy 节点上**指令遵循劣化**——宁可大模型一次成功，也别小模型重试。
 2. **Diversity 是不是硬约束**：`idea_score_reviewer2` / `review_persona_reviewer2` 红队 persona 跟其他 persona 用**同一 backend** 时打分高度相关（实测 r > 0.85），多样性退化。这两个节点必须**跨 backend** 路由。机制见 [configuration.md § ideate panel diversification](configuration.md#ideate-panel-diversification)。
-3. **Caching 红利**：`anthropic.api_key` 模式下 Anthropic prompt caching 自动生效，review / ideate / draft 反复带同一 system prompt + library context 时**输入成本 -90%**。OpenAI 兼容中转站、`claude_agent_sdk` 都不带 caching；选 backend 时如果两选项质量差不多，优先有 caching 的那条。
+3. **Caching 红利**：`anthropic.api_key` 模式下 Anthropic prompt caching 自动生效，review / ideate / draft 反复带同一 system prompt + library context 时**输入成本 -90%**。OpenAI 兼容中转站、`claude_agent_sdk` 都不带 caching；选 backend 时如果两选项质量差不多，优先有 caching 的那条。中转站走 Anthropic 协议保留 caching 的写法见 [configuration-cookbook.md § 第三方中转站接入](configuration-cookbook.md#第三方中转站接入)。
 
 > 📊 **写作链不要降级**：`paragraph_write` / `section_coherence_polish` / `draft_compose` 是读者最终读到的文笔。这三个节点降到 Sonnet 以下，质量差距人眼可辨，其他节点都可以省、这三个不行。
 
