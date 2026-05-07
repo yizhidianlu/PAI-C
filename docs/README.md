@@ -21,15 +21,21 @@
 | [paper-plan.md](paper-plan.md) | Paper-quality 写作链路 — `paper_plan` / claims / retrieval / paragraph compose / clusters / revisions。 |
 | [quality-gate.md](quality-gate.md) | `/paic-finalize` 提交前 8 类一致性检查、`overrides=` 语义、决策树。 |
 
-### Setup & reference
+### Configuration
 
 | Doc | Use it when |
 |---|---|
-| [configuration.md](configuration.md) | `~/.paic/config.yaml` 全字段 — 4 个 LLM backend / 命名 profile / host orchestration / 节流 / 多平台检索 / ideate panel diversification。 |
+| [configuration.md](configuration.md) | `~/.paic/config.yaml` 全字段参考 — 4 个 LLM backend / 节点路由表 / 命名 profile / 节流 / 多平台检索 / ideate panel 原理。 |
+| [configuration-cookbook.md](configuration-cookbook.md) | 实战配方与决策树 — 4 鉴权模式选哪个 / 第三方中转站 / host orchestration 全套 / panel 推荐配置 / fallback 与混合策略。 |
 | [model-presets.md](model-presets.md) | 各节点 workload 拆解 + 三档（Premium / Balanced / Frugal）模型推荐 + 可粘贴的 yaml 模板。 |
 | [config.yaml.example](config.yaml.example) | `~/.paic/config.yaml` 模板，含每段注释 — `register_mcp.py` 首次运行时 seed。 |
+
+### Operations
+
+| Doc | Use it when |
+|---|---|
 | [updating.md](updating.md) | `git pull` 后让改动生效 — 按改动类型决定 `install_skills` / `register_mcp` / 重启顺序。 |
-| [troubleshooting.md](troubleshooting.md) | `paic doctor` 逐行解读、运行时错误目录、`/paic-finalize` 失败排查。 |
+| [troubleshooting.md](troubleshooting.md) | `paic doctor` 输出报错时的修复路径、运行时错误目录、`/paic-finalize` 失败排查。 |
 
 ### Optional integrations
 
@@ -40,7 +46,7 @@
 | [zotero-sync.md](zotero-sync.md) | Zotero 同步 — `/paic-ingest` 跑完后可选把论文同步到 Zotero（依赖独立 zotero-mcp，免 API key）。 |
 | [overleaf-sync.md](overleaf-sync.md) | Overleaf 双向同步 — `/paic-draft` 跑完后基于 Dropbox 镜像到 Overleaf project（免 API key、免 Premium）。 |
 
-> **四种鉴权模式速览**：(A) API key（默认）/ (B) Pro/Max 订阅 `claude_agent_sdk` / (C) 订阅 + host orchestration / (D) 第三方 OpenAI 兼容中转站。详见 [getting-started.md § 4](getting-started.md) 与 [configuration.md](configuration.md)。
+> **四种鉴权模式速览**：(A) API key（默认）/ (B) Pro/Max 订阅 `claude_agent_sdk` / (C) 订阅 + host orchestration / (D) 第三方 OpenAI 兼容中转站。安装步骤见 [getting-started.md § 4](getting-started.md#4-配置鉴权)；选择决策树见 [configuration-cookbook.md § 选哪种鉴权模式](configuration-cookbook.md#选哪种鉴权模式)。
 
 ---
 

@@ -7,19 +7,17 @@
 - [顶层字段](#顶层字段)
 - [arxiv 存储路径](#arxiv-存储路径) · [arxiv MCP 节流](#arxiv-mcp-节流)
 - [Provider](#provider) · [Anthropic 双路](#anthropic-双路) · [OpenAI 双路](#openai-双路) · [Semantic Scholar](#semantic-scholar)
-- [路由 routing](#路由-routing) · [9 个节点标签](#9-个节点标签) · [命名 provider profile](#命名-provider-profile同-provider-不同模型)
-- [Host Orchestration](#host-orchestration订阅复用零外部-llm-调用)
+- [路由 routing](#路由-routing) · [节点路由表](#9-个节点标签) · [命名 provider profile](#命名-provider-profile同-provider-不同模型)
+- [Host Orchestration（基础）](#host-orchestration)
 - [外部检索（多平台 paper-search-mcp）](#外部检索多平台-paper-search-mcp)
-- [ideate panel diversification](#ideate-panel-diversification)
+- [ideate panel diversification（原理与检测）](#ideate-panel-diversification)
 - [改完之后](#改完之后)
+
+> **实战配方与决策树**（4 鉴权模式 / 第三方中转 / host 全套 yaml / panel 推荐配置 / fallback 与混合策略）见 [configuration-cookbook.md](configuration-cookbook.md)。
 
 ---
 
-`register_mcp.py` 首次运行时会从 [`config.yaml.example`](config.yaml.example) seed 一份到 `~/.paic/config.yaml`。**已存在则不覆盖**，所以你之后改的不会被脚本擦掉。
-
-> 改完 `~/.paic/config.yaml` 必须**完全重启 Claude Code**，MCP server 不会热加载。
-
-随时可跑 `uv run paic info` 看当前生效的解析结果，或 `uv run paic doctor` 验证整体健康。
+`register_mcp.py` 首次运行时会从 [`config.yaml.example`](config.yaml.example) seed 一份到 `~/.paic/config.yaml`。**已存在则不覆盖**，所以你之后改的不会被脚本擦掉。随时可跑 `uv run paic info` 看当前生效的解析结果，或 `uv run paic doctor` 验证整体健康。
 
 ---
 
@@ -180,59 +178,7 @@ providers:
 
 > JSON mode 在不同代理支持度不一；backend 失败会自动 fallback 到通用 ` ```json fence ` 解析。
 
-**第三方中转站（如 mytoken.top）**
-
-国内常见做法：用第三方 API 中转站（mytoken.top / closeai / etc.）拿一个统一 sk-* key，按 OpenAI 兼容协议接 PAI-C。配方：
-
-```powershell
-# 1. 把中转站给的 key 设为环境变量（**不要**写进 yaml）
-[Environment]::SetEnvironmentVariable("MYTOKEN_API_KEY", "sk-...", "User")
-```
-
-```yaml
-# 2. ~/.paic/config.yaml
-providers:
-  openai:
-    mode: compatible
-    model: gpt-5.5                            # 中转站暴露的 model 别名（按你的 plan 改）
-    api_key_env: MYTOKEN_API_KEY              # 自定义 env 名，避免和 OPENAI_API_KEY 撞
-    base_url: https://mytoken.top/v1          # OpenAI 兼容路径
-
-routing:
-  default: openai                             # 全部 9 个节点走中转站
-  # overrides:
-  #   summarize: host                         # 想再省钱的话 summarize 走主对话
-```
-
-注意点：
-
-- **API key 永远走 env，不进 yaml**：`api_key_env: MYTOKEN_API_KEY` 只是个变量名，PAI-C 启动时去 `os.environ` 拿值。
-- **JSON mode 不可靠**：中转站的模型对 `response_format=json_object` 支持度不一致。PAI-C 已有 ```json fence` 解析兜底，但如果某节点（特别是 review 的 4 persona）反复 schema 校验失败，把它单独 override 回 `anthropic.api_key` 或切到 `host`。
-- **OpenAI 协议不带 Anthropic prompt caching**：走 OpenAI 兼容协议时，PAI-C 不会发 `cache_control: ephemeral`。4-persona review 每轮都要重发 persona system prompt，token 用量比直连 Anthropic 高约 30%。
-
-**通过 Anthropic 格式接入（可保留 prompt caching）**
-
-如果中转站同时暴露 Anthropic SDK 兼容路径（mytoken.top 的 `https://mytoken.top/` 根路径就是这种），可以直接走 PAI-C 的 `anthropic.api_key` backend，token 与 cache_control 全部保留：
-
-```yaml
-providers:
-  anthropic:
-    mode: api_key
-    model: claude-opus-4-7              # 中转站需支持的 Claude 模型名
-    api_key_env: MYTOKEN_API_KEY        # 复用同一个 sk-* key 即可
-    base_url: https://mytoken.top        # 注意：不带 /v1，Anthropic SDK 会自己拼 /v1/messages
-
-routing:
-  default: anthropic
-```
-
-什么时候选哪条：
-
-| 你的目标 | 推荐 |
-|---|---|
-| 模型名是 OpenAI 系（gpt-*）；不在乎 review token 成本 | OpenAI 兼容路径（`openai.compatible` + `/v1`） |
-| 模型名是 Anthropic 系（claude-*）；想留 prompt caching 省 review 成本 | Anthropic 格式路径（`anthropic.api_key` + `base_url`） |
-| 混合：用便宜 GPT 做 brainstorm + Anthropic 做 review | 两个 provider 都配，用 `routing.overrides` 分流 |
+**第三方中转站（mytoken.top / OpenRouter / closeai）**：可走两条路径——OpenAI 协议（`openai.compatible` + `/v1`，gpt-* 模型用）或 Anthropic 协议（`anthropic.api_key` + `base_url`，claude-* 模型用，**保留 prompt caching**）。完整 yaml 模板与决策表见 [configuration-cookbook.md § 第三方中转站接入](configuration-cookbook.md#第三方中转站接入)。
 
 ### Semantic Scholar
 
@@ -376,118 +322,30 @@ routing:
 
 ### Fallback 机制
 
-`fallback` 字段可选。若 `default` 抛 `LLMUnavailable`（典型场景：`claude_agent_sdk` 没登录或 token 失效），router 本次起切到 fallback、不中断 graph 流。
+`fallback` 字段可选。若 `default` 抛 `LLMUnavailable`（典型场景：`claude_agent_sdk` 没登录或 token 失效），router 本次起切到 fallback、不中断 graph 流。`fallback: host` 被 router 拒绝——host 是用户主动选择的路由目标，不是 transient failure 的兜底。
 
-推荐组合：`default=anthropic.claude_agent_sdk` 时配 `fallback=anthropic.api_key`——平时走订阅，鉴权失败自动降到 API key 顶住。
-
-### 路由示例：混合策略
-
-```yaml
-providers:
-  anthropic:
-    mode: claude_agent_sdk
-    model: claude-opus-4-7
-  openai:
-    mode: compatible
-    base_url: https://openrouter.ai/api/v1
-    model: gpt-4o-mini
-
-routing:
-  default: anthropic                       # 主用订阅
-  fallback: anthropic.api_key              # 订阅鉴权失败降到 API key
-  overrides:
-    summarize: openai                      # 摘要用便宜小模型
-    ideate_brainstorm: openai              # 脑暴也用便宜的
-    review_persona_reviewer2: anthropic    # 但最毒的 reviewer 留 Claude
-```
-
-跑 `uv run paic info` 验证：
-
-```text
-routing default    : anthropic
-routing overrides:
-  summarize                            → openai
-  ideate_brainstorm                    → openai
-  review_persona_reviewer2             → anthropic
-```
+混合策略 yaml 模板（订阅 + 中转站分流 / 红队保 Claude / Fallback 链组合）见 [configuration-cookbook.md § Fallback 与混合策略](configuration-cookbook.md#fallback-与混合策略)。
 
 ---
 
-## Host Orchestration（订阅复用、零外部 LLM 调用）
+## Host Orchestration
 
-`claude_agent_sdk` 已经做到「用 Pro/Max 订阅、零 ANTHROPIC_API_KEY」，但它在 MCP 子进程里 spawn 链路 auth 偶有不稳。**Host orchestration 模式**是更彻底的退路：PAI-C MCP 完全**不发**任何 LLM 调用，让 Claude Code 主对话自己读 markdown、自己生成结构化 JSON，PAI-C 只做 schema 校验 + 写盘。
+`host` 是一个特殊路由目标——PAI-C MCP 完全**不发**任何 LLM 调用，让 Claude Code 主对话生成结构化 JSON，PAI-C 只做 schema 校验 + 写盘。这是「订阅复用 + 零外部 LLM 调用」的最彻底退路。
 
-**适用场景**：
-- 你只有 Pro/Max 订阅，不想配 API key、也不想被 `claude_agent_sdk` auth 问题坑
-- 你想看到 Claude 的推理过程在主对话里 transparent
-- 你已经在为主对话付费（订阅），不想多走一层 SDK 链路
+**支持节点**：全部 19 个 LLM 节点都已 host-aware，见上方 [节点路由表](#9-个节点标签) 「是否 host-aware」列。`host` 在 `routing.overrides` 与 `routing.default` 都可用，但**不要 `default: host`**——会让所有节点走主对话 round-trip，多轮 graph 体验大幅下降。
 
-### 支持 host 的节点（白名单）
-
-`host` **只能**在 `routing.overrides` 中给以下节点使用——其他节点 host 无实现，graph 跑到时会抛 `HostOrchestrationRequired` 而**不是**优雅 fallback：
-
-| 节点 | 状态 |
-|---|---|
-| `summarize` | ✓ 支持 |
-| `draft_polish` | ✓ 支持 |
-| `draft_compose` | ✓ 支持 |
-| `review_persona_*` / `review_moderator` / `review_verdict` | ✗ **不支持**——配置后 review graph 会 crash |
-| `ideate_brainstorm` / `idea_score_*` | ✗ **不支持** |
-| `experiment_design` | ✗ **不支持** |
-| `figure_plan` / `figure_prompt` | ✗ **不支持** |
-
-> Server 启动时**不**校验 `routing.overrides` 里 host 的合法性——配错只在 graph 实际跑到该节点时才崩。所以请仔细按白名单配。`paic doctor` 未来会加这一行校验。
-
-### 配置
-
-`host` 是一个特殊路由目标名，不是 backend。在 `routing.overrides` 里把节点指向它即可：
+**最小配置**：
 
 ```yaml
-providers:
-  anthropic:
-    mode: claude_agent_sdk         # 留给 review/ideate/experiment 用
-    model: claude-opus-4-7
-
 routing:
-  default: anthropic               # → claude_agent_sdk（review 等用）
+  default: anthropic
   overrides:
-    summarize: host                # ← 关键：summarize 走主对话
+    summarize: host                # 摘要走主对话；零外部 LLM
 ```
 
-**不推荐 `default: host`**——会让所有节点都走 host，包括 review。review graph 是 4 persona × N round 的状态机，host 化会导致体验大幅下降。用 override 显式只覆盖 summarize 这一条。
-
-### 工作流
-
-`/paic-summarize 2401.12345` 在 host 模式下的执行：
-
-1. SKILL 调 `mcp__paic__paic_summarize_run(project_dir, paper_id)`
-2. PAI-C 加载 markdown（local probe 或 caller-supplied `paper_text`）
-3. PAI-C 检测到 `routing.overrides.summarize: host`，**不**调 LLM；返回：
-   ```json
-   {
-     "mode": "host_orchestration",
-     "paper_id": "...",
-     "markdown": "<full paper body>",
-     "schema_hint": {<JSON schema for problem/method/key_results/limitations/techniques/relevance_to_project>},
-     "next_tool": "mcp__paic__paic_summarize_persist",
-     "instructions": "..."
-   }
-   ```
-4. SKILL 让 Claude（主对话）读 `markdown`、按 `schema_hint` 生成 JSON
-5. SKILL 调 `mcp__paic__paic_summarize_persist(project_dir, paper_id, structured={...})`
-6. PAI-C 校验 schema → 写 `library/summaries/<id>.{md,yaml}` → 返回 `persisted: true`
-
-如果 step 5 返回 `error: schema_validation_failed`，SKILL 让 Claude 修正 JSON 重试一次。
-
-`paic doctor` 会显示一行 `host orchestration  enabled for: summarize (no PAI-C-internal LLM call)`。
-
-### 已知约束
-
-- **多篇 summarize 必须串行**：每篇要把整份 markdown 进主对话 context 阅读再生成 JSON。`/paic-summarize all` 17 篇时 SKILL 会逐篇处理（不并发），避免 context 爆。
-- **风格一致性**：API 模式有 `prompts/summarize.md` 统一摘要风格；host 模式靠 SKILL.md 内置的英文要求。两者可能轻微漂移。
-- **review 不覆盖**：review graph 状态机依赖 PAI-C 内部 LLM 调用 + SqliteSaver checkpoint。host 模式下 review 仍走 `claude_agent_sdk`（或你 default 配置的 backend）。
-
-详见 [troubleshooting.md → host orchestration 排错](troubleshooting.md#host-orchestration-排错)。
+- 配置场景与 yaml 模板（含 sync flow / in-graph flow 工作流图）见 [configuration-cookbook.md § Host orchestration 配置](configuration-cookbook.md#host-orchestration-配置)
+- directive schema / failure modes / 实现新 host-aware 节点见 [host-orchestration-internals.md](host-orchestration-internals.md)
+- 错误恢复见 [troubleshooting.md → host orchestration 排错](troubleshooting.md#host-orchestration-排错)
 
 ---
 
@@ -577,41 +435,7 @@ uv run python scripts/register_paper_search_mcp.py
 - `[OK ] panel routing  diverse: 3 distinct backends across 4 personas` —— 配置好
 - `[WARN] panel routing  3/4 personas resolve to anthropic.api_key — scoring may be redundant` —— 默认状态，建议改
 
-**推荐配置 1（生产，对照度高）**：
-```yaml
-routing:
-  default: anthropic
-  overrides:
-    idea_score_reviewer2: openai      # 红队角色路由到不同模型
-    idea_score_novelty: anthropic.api_key
-    # methodology + impact 用 default
-```
-- reviewer2 用 OpenAI → 与其它 3 persona 形成 model-level 对照
-- 至少 2 distinct backends，doctor 给 OK
-
-**推荐配置 2（低预算）**：
-```yaml
-providers:
-  openai:
-    mode: compatible
-    model: gpt-4o-mini                 # 便宜中转
-    base_url: https://openrouter.ai/api/v1
-
-routing:
-  default: anthropic                   # default 给 brainstorm 用（高质量）
-  overrides:
-    idea_score_methodology: openai
-    idea_score_novelty: openai
-    idea_score_impact: openai
-    idea_score_reviewer2: anthropic    # reviewer2 留 Claude 的最严苛视角
-```
-- 3/4 persona 用便宜模型，reviewer2 留贵模型 —— 成本砍 ~70%、保留关键红队
-- 也通过 doctor 检查（2 distinct backends）
-
-**额外 cost 控制**：
-- `personas=["methodology","reviewer2"]` 在 `/paic-ideate` 启动时传 → 2 persona × 3 round ≈ 7-10 LLM calls（vs 默认 12-15）
-- ideate v2 内置 score_cache：refine 模式下 keep 的 seed drafts 不重复评分，自动省 25-40% LLM calls
-- panel 输出 `max_tokens=1024`（vs default 4096） → 输出 cost 砍 50%
+**实战 yaml 模板**（生产对照度配置 / 低预算配置 / cost 控制）见 [configuration-cookbook.md § ideate panel diversification 实战配置](configuration-cookbook.md#ideate-panel-diversification-实战配置)；按 model-tier 系统化的推荐见 [model-presets.md](model-presets.md)。
 
 ---
 
