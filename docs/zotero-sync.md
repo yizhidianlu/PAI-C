@@ -43,12 +43,19 @@ pipx install zotero-mcp-server
 验证：
 
 ```powershell
-zotero-mcp --version
+zotero-mcp version
+zotero-mcp setup-info     # 看安装路径 + 当前 env，便于排错
 ```
 
-> 想要语义检索 / PDF 抽取 / Scite 引用智能等扩展能力，参考 zotero-mcp 自身 README 的 `[semantic]` / `[pdf]` / `[scite]` extras。PAI-C 的 ingest 同步不依赖任何 extra。
+> **注意 zotero-mcp 是子命令风格**（`version` / `serve` / `setup` / `setup-info`），不是 GNU 风格 flag。`zotero-mcp --version` 会报 `unrecognized arguments`，去掉 `--` 即可。
+
+> `zotero-mcp setup-info` 输出的 "Claude Desktop config at ..." 与本指南无关——那是给 Claude Desktop 用户的；本仓库的 PAI-C 跑在 **Claude Code** 上，配置位置完全不同（见 Step 3）。
+
+> 想要语义检索 / PDF 抽取 / Scite 引用智能等扩展能力，参考 zotero-mcp 自身 README 的 `[semantic]` / `[pdf]` / `[scite]` extras。PAI-C 的 ingest 同步不依赖任何 extra。`zotero-mcp setup` 子命令只用于 Claude Desktop + ChromaDB 语义索引，**Claude Code 用户无需跑**。
 
 ## Step 3：注册到 Claude Code
+
+> **预检 30 秒**：`Test-NetConnection -ComputerName localhost -Port 23119`（PowerShell）或 `nc -z localhost 23119 && echo OK`（bash）。`TcpTestSucceeded : True` / `OK` → Zotero 桌面 app 在跑、本地 API 通；否则去 Step 1 启动 Zotero。后面 Step 5 验证失败大半是这一关没过。
 
 PAI-C 跑在 Claude Code（CLI）下，注册位置是 `~/.claude.json` 的 `mcpServers` 段。两种方式：
 
@@ -177,8 +184,9 @@ PAI-C → Zotero 是**单向**，不维护反向同步。这意味着：
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
+| `zotero-mcp --version` 报 `unrecognized arguments` | zotero-mcp 用子命令风格，不是 flag | 改成 `zotero-mcp version`；同理 `setup-info` / `setup` / `serve` 等 |
 | `/paic-ingest` 跑完没问 Zotero | zotero-mcp 没注册 / 注册了但 Claude Code 没重启 | 跑 `claude mcp list` 看 zotero 是否在；重启 Claude Code |
-| zotero 调用报 `connection refused` | Zotero 桌面 app 没开 / 本地 API 被禁 | 启动 Zotero；查 `extensions.zotero.httpServer.enabled` |
+| zotero 调用报 `connection refused` | Zotero 桌面 app 没开 / 本地 API 被禁 | 启动 Zotero；`Test-NetConnection localhost 23119` 验证；查 `extensions.zotero.httpServer.enabled` |
 | `ZOTERO_LIBRARY_ID not set` | 选了 Web API 但 env 缺一个字段 | 检查 `~/.claude.json` zotero 段四个 env 都有；重启 |
 | collection 一直建不上 | 同名 collection race / 权限 | 改名重试；group library 检查 API key 有 read+write 权限 |
 | 同一篇被建了副本 | 走了 `zotero_add_from_file`（无 DOI 路径） + Zotero 没抽到 DOI | 对该篇手动在 Zotero 里 merge duplicates |
