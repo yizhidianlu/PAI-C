@@ -4,7 +4,7 @@
 
 > ⚠ **必须重启 Claude Code，否则新功能静默失效**
 >
-> MCP server 是 Claude Code 启动时拉起的 Python 子进程，**不会**自动 reload。如果 `git pull` 后**不重启**：新增 MCP 工具不暴露（调用直接 method-not-found）；schema 新字段被 pydantic 默默 strip（YAML 持久文件只剩旧字段，下游一致性检查永远 0 命中）；compose 新 mode 不可用——**而且全程没有错误提示**。
+> PAI-C MCP server 在 Claude Code 启动时拉起，**不会**自动 reload。`git pull` 后不重启的话：新增 MCP 工具不暴露；schema 新字段被静默丢弃（YAML 持久文件只剩旧字段，下游一致性检查 0 命中）；新 mode 不可用——**全程没有错误提示**。
 >
 > 「重启」= **任务管理器中无 `Claude` 进程残留**——`/clear` 不算、切窗口不算、最小化不算。Mac/Linux 用 `ps aux | grep claude` 确认。
 
@@ -21,22 +21,20 @@ uv run python scripts/install_skills.py     # 同步 SKILL.md 到 ~/.claude/skil
 
 ### 验证新工具是否真的暴露了
 
-重启后，跑 `uv run paic doctor` 看 `mcp tools exposed: <count>` 这一行。如果数字异常（远低于源码里 `@mcp.tool()` 装饰器数），说明 server 没刷新——再次完全退出。
-
-或在 Claude Code 里直接试调一个新工具（例如 `paic_search_recall_check` / `paic_paper_plan_status` / `quality_gate_run_tool`）；method-not-found 即重启失败。
+重启后跑 `uv run paic doctor` 看 `mcp tools exposed: <count>` 这一行——数字异常偏低说明 server 没刷新，再次完全退出重试。
 
 ---
 
 ## 按改动类型决定动作
 
-| 改动文件 | 必要动作 |
+| 改动 | 必要动作 |
 |---|---|
-| `pyproject.toml` / `uv.lock`（Python 依赖增减） | `uv sync` |
-| `src/paic/**.py`（MCP 工具 / doctor / config / graphs / latex 等） | 完全重启 Claude Code |
+| Python 依赖增减（`pyproject.toml` / `uv.lock`） | `uv sync` |
+| Python 源码（MCP 工具 / doctor / config / graphs / latex 等） | 完全重启 Claude Code |
 | `skills/*/SKILL.md`（slash command 行为变更） | `uv run python scripts/install_skills.py` + 重启 |
-| `skills/<新 skill 目录>/`（新增 SKILL，例如 `paic-paper-plan/` / `paic-finalize/`） | `uv run python scripts/install_skills.py` + 重启 |
-| `src/paic/mcp_server/server.py` 新增 `@mcp.tool()` 或工具签名变更 | `uv run python scripts/register_mcp.py` + 重启 |
-| `~/.paic/config.yaml`（用户修改 yaml） | 重启 Claude Code（config 在 server 启动时读取） |
+| 新增 SKILL 目录 | `uv run python scripts/install_skills.py` + 重启 |
+| 新增 MCP 工具 / 工具签名变更 | `uv run python scripts/register_mcp.py` + 重启 |
+| `~/.paic/config.yaml` | 重启 Claude Code（config 在 server 启动时读取） |
 | `docs/*.md` / `README.md` / `CLAUDE.md` | 无需动作 |
 
 ---

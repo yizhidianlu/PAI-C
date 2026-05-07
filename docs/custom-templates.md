@@ -125,7 +125,7 @@ mkdir -p .paic/templates/myvenue
 > \title{{ '{' }}{{ project.title }}{{ '}' }}
 > ```
 >
-> 这写法在内置模板里也能看到（`src/paic/latex/templates/neurips/main.tex.j2:21`）。
+> 这写法在内置模板里也能看到。
 
 ### 2. `template.yaml`（可选）
 

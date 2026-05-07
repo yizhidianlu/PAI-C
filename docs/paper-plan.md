@@ -53,26 +53,22 @@ PAI-C 在 v0.1 之上加了一组 **paper-quality** 工具，把「散点式生�
 | `algorithm_plan[]` | list | 预留 algorithm 槽位 |
 | `open_todos[]` | list | 未决待用户确认的事项 |
 
-### 三个工具
-
-```text
-paic_paper_plan_create(project_dir, idea_id, experiment_id=None,
-                       target_venue=None, audience=None, dry_run=False)
-paic_paper_plan_update(project_dir, patch={"thesis": "...", ...})
-paic_paper_plan_status(project_dir)
-```
-
-`create` 是首次生成；存在则报 `paper_plan_already_exists`，让用户选 `update` 或删文件重做。`experiment_id` 省略 / `None` → thesis-first 路径，LLM 把 method / evaluation 保持高层描述（不绑定 datasets / baselines / metrics）；用户跑完 `/paic-experiment` 后用 `update(patch={"experiment_id": "..."})` 绑定，或删 `paper_plan.yaml` 重 create 一次性吃进实验细节。`update` 是浅合并 patch（list / dict 字段是整体替换，不是 append——要 append 先用 status 读旧 list 再传回）。
-
 ### 用法
 
 ```text
 /paic-paper-plan
 ```
 
-SKILL 流程：`status` 看是否已有 → 没有就 `create` → 有就渲染让用户决定 update / overwrite / 退出。
+SKILL 流程：先看是否已有 plan → 没有就 create → 有就渲染让用户决定 update / overwrite / 退出。
 
-> Note: `section_plan[*].name` 必须是 canonical (`01_intro` / `02_related` / `03_method` / `04_experiments` / `05_discussion` / `06_conclusion`)，否则 compose 注入时找不到对应 entry，等于注入失败。
+**两种合法顺序**（都在 `/paic-draft compose` 之前完成）：
+
+- **Experiment-first**（默认）：`/paic-ideate` → `/paic-experiment` → `/paic-paper-plan` 一次到位，含实验细节
+- **Thesis-first**（thesis-driven 写作的自然顺序）：`/paic-ideate` → `/paic-paper-plan`（**省略 experiment_id**，仅 idea 锁论点 + 贡献，方法 / 评估保持高层描述）→ `/paic-experiment`（按 contributions 设计实验）→ update 绑 `experiment_id`，或删 plan 重 create
+
+更新已有 plan 用 update 增量改（patch 浅合并；list / dict 是整体替换，要 append 需先读全列表）。
+
+> Note: `section_plan[*].name` 必须是 canonical (`01_intro` / `02_related` / `03_method` / `04_experiments` / `05_discussion` / `06_conclusion`)，否则 compose 注入时找不到对应 entry。
 
 ---
 
@@ -94,14 +90,12 @@ SKILL 流程：`status` 看是否已有 → 没有就 `create` → 有就渲染�
   appears_in_sections: ["04_experiments"]
 ```
 
-### 工具
+### Claim ledger 行为
 
-| 工具 | 作用 |
-|---|---|
-| `paic_claims_init` | paper_plan.contributions 里每条种子化为 1 个 novelty 类 needs_evidence claim |
-| `paic_claims_extract` | 给一段 LaTeX，LLM 抽里面的 claim-shape 句子（compose / polish 跑完自动调）|
-| `paic_claims_validate` | 跨全部 claim 检查 cite_key 是否在 library、experiment_id 是否存在、强声明是否无支持 |
-| `paic_claims_list` | 读全部 claim，可按 status 过滤 |
+- **种子化**：paper_plan.contributions 每条自动产 1 个 novelty 类 needs_evidence claim
+- **抽取**：`/paic-draft compose` / `polish` 跑完自动从生成的 LaTeX 里 extract claim-shape 句子；可手动补抽
+- **校验**：跨全部 claim 检查 cite_key 是否在 library、experiment_id 是否存在、强声明是否无支持
+- **列表**：可按 status / type 过滤查看
 
 ### 状态机
 
@@ -117,7 +111,7 @@ needs_evidence ── reviewer 否决 ──────────────
 
 ## 3. Section-aware retrieval — BM25 + MMR
 
-`compose_section` 旧版按 selected.yaml 顺序截前 40 篇。`paic_library_retrieve` 用 BM25 + MMR (lambda=0.7) 按 section 检索。**library > 40 篇时 compose 自动启用**；否则保持旧的全列表行为。
+旧版 compose 按 `selected.yaml` 顺序截前 40 篇；现在用 BM25 + MMR (lambda=0.7) 按 section 检索。**library > 40 篇时 compose 自动启用**；否则保持旧行为。
 
 ### 触发时机
 
@@ -126,11 +120,10 @@ needs_evidence ── reviewer 否决 ──────────────
 | compose 模式 `from_stub` / `from_scratch`，library ≤ 40 | ✗ 用插入顺序 |
 | compose 任意模式，library > 40 | ✓ BM25 检索 top-40 |
 | compose 模式 `paragraph` | ✓ 始终 retrieve top-20 给 outline |
-| 手动调 `paic_library_retrieve` | ✓ |
 
-### Query 模板
+### Query 拼接
 
-`build_query(section, paper_plan, idea, experiment)` 按 section 拼 query：
+按 section 自动拼 query：
 
 | Section | 拼料 |
 |---|---|
@@ -139,16 +132,9 @@ needs_evidence ── reviewer 否决 ──────────────
 | `03_method` / `04_experiments` | hint + experiment.proposed_method + datasets + baselines + metrics |
 | `05_discussion` / `06_conclusion` | hint + thesis + 各 contribution 描述 |
 
-### 手动调用
+每 hit 含 `cite_key` / `score` / `match_reason` / `snippet` / `title` / `year` / `authors`。
 
-```text
-paic_library_retrieve(project_dir, section="01_intro", k=12, mmr_lambda=0.7)
-paic_library_retrieve(project_dir, query="motor imagery EEG channel selection", k=20)
-```
-
-返回 `{query, library_size, k, hits[]}`，每 hit 含 `cite_key` / `score` / `match_reason` / `snippet` / `title` / `year` / `authors`。
-
-> Tip: `mmr_lambda=1.0` 是纯 BM25，`0.0` 是纯多样性。0.7 默认值在 50-200 篇 library 上是甜点。
+> Tip: `mmr_lambda=1.0` 是纯 BM25，`0.0` 是纯多样性；0.7 默认值在 50–200 篇 library 上是甜点。
 
 ---
 
@@ -182,7 +168,7 @@ paic_library_retrieve(project_dir, query="motor imagery EEG channel selection", 
 
 ## 5. Related-work clustering
 
-`paic_related_work_cluster` 单 LLM call 把 library 分 3-5 群：
+单 LLM call 把 library 分 3–5 群，落 `<project>/.paic/plans/related_work_clusters.yaml`：
 
 ```yaml
 clusters:
@@ -193,20 +179,15 @@ clusters:
     contrast_to_proposed: "Unlike CSP-family methods, we select channels per-subject."
 ```
 
-落 `<project>/.paic/plans/related_work_clusters.yaml`。**`compose --mode paragraph --section 02_related` 会自动消费**：每 cluster 一段、cluster label 起头、contrast 作为段落 intent 驱动。
+`compose --mode paragraph --section 02_related` 会**自动消费**：每 cluster 一段、cluster label 起头、contrast 作为段落 intent 驱动。
 
-```text
-paic_related_work_cluster(project_dir)
-paic_related_work_status(project_dir)
-```
-
-> Note: 没跑 `paic_related_work_cluster` 时 02_related 段落会按 retrieval hits 直接 outline，效果不如有 cluster；不会报错。
+> Note: 不聚类直接 compose `02_related` 也行——会按 retrieval hits 直接 outline，效果略差但不报错。
 
 ---
 
 ## 6. Revision queue
 
-`/paic-review` 跑完后调 `paic_revision_extract` 把 moderator + persona 评论转成 `RevisionTask` 队列。每条 task 落 `<project>/.paic/revisions/<round>_<id>.yaml`。
+`/paic-review` 跑完后，moderator + persona 评论自动转成 `RevisionTask` 队列。每条 task 落 `<project>/.paic/revisions/<round>_<id>.yaml`。
 
 ### Task 字段
 
@@ -215,30 +196,23 @@ id: <ulid>
 severity: blocker            # info | minor | major | blocker
 status: open                 # open | in_progress | resolved | wontfix
 target_kind: section         # section | claim | experiment_field | figure | table | global
-target_ref: "01_intro"       # 具体引用，e.g. CL3 / baselines / F2
+target_ref: "01_intro"       # 具体引用，如 CL3 / baselines / F2
 summary: "intro 缺第 3 条 contribution 的 motivation"
-patch_hint: "在第 2 段后加一句…"
+patch_hint: "在第 2 段后加一句……"
 source_review_round: 1
 source_persona: methodology
 ```
-
-### 工具
-
-| 工具 | 作用 |
-|---|---|
-| `paic_revision_extract` | review payload → 任务列表 |
-| `paic_revision_list` | 按 status / severity / round 过滤 |
-| `paic_revision_apply` | 标 in_progress（实际编辑由用户/SKILL 完成）|
-| `paic_revision_resolve` | 标 resolved + 必填 resolution_summary |
 
 ### 多轮跟踪
 
 ```text
 /paic-review               # round 1 → 8 个任务
-# 用户 fix 5 个，调 paic_revision_resolve x5
-/paic-review               # round 2 → 看 paic_revision_list(status="open") 还剩什么
-                            # 新 round 产的 task source_review_round=2
+# 用户 fix 5 个、标记 resolved（每条带 resolution_summary）
+/paic-review               # round 2 → 看 status=open 还剩什么
+                            # 新一轮的 task source_review_round=2
 ```
+
+可按 `status` / `severity` / `round` 过滤查看；apply 标 in_progress（实际编辑由用户 / SKILL 完成）；resolve 标 resolved（必填 resolution_summary）。
 
 ---
 
@@ -246,19 +220,17 @@ source_persona: methodology
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| `/paic-draft compose` 跑完没生成 claims | claim_extract 是 best-effort，LLM 抽空 | 看 `claims.yaml` 是否存在，跑 `paic_claims_extract` 手动补；不影响 compose 成功 |
-| retrieval 返回空 | library 全部 token 是 stopword / 太短 / query 语言与 library 错配 | 跑 `paic_library_retrieve(query="...")` 拿原始 query 试；或加 `paic_summarize` 补结构化 fields 让 BM25 命中 |
-| paragraph 模式很慢 | N+2 次 LLM call，长 section 可能 ~1-3 min | 短 section 改回 `from_stub`；`mode="paragraph"` + `target_words=400` 折中 |
-| `paper_plan_already_exists` | 重复跑 create | `paic_paper_plan_update` 增量改；或删 yaml 重跑 |
-| `update` 后 list 字段被覆盖了 | patch 是浅合并、list 是整体替换 | 先 `status` 读全 list、append 新条、传完整 list 给 update |
-| `revision_extract` 抽出 0 个 task | review payload 形状不对 | 确认传的是 `{moderator, critiques}` 或 `{synthesis, personas}` 形式 |
-| compose 抛 `latex_validation_failed` | LLM 编了 cite_key 不在 library | 看 `cite_keys_missing_from_library`，要么 ingest，要么重 compose |
+| `/paic-draft compose` 跑完没生成 claims | claim 抽取是 best-effort，LLM 抽空 | 不影响 compose 成功；跑一次手动 extract 即可 |
+| retrieval 返回空 | library 全部 token 是 stopword / 太短 / query 语言与 library 错配 | 用原始 query 串再试；或先 `/paic-summarize` 补结构化 fields 让 BM25 命中 |
+| paragraph 模式很慢 | N+2 次 LLM call，长 section 可能 1–3 min | 短 section 改回 `from_stub`；`paragraph` + `--target-words 400` 折中 |
+| `paper_plan_already_exists` | 重复跑 create | 走 update 增量改；或删 yaml 重跑 |
+| update 后 list 字段被覆盖了 | patch 是浅合并、list / dict 是整体替换 | 先读全 list、append 新条、再传完整 list |
+| revision 抽出 0 个 task | review payload 形状不对 | 确认 review 是从 `/paic-review` 正常跑完的 |
+| compose 报 `latex_validation_failed` | LLM 编了 cite_key 不在 library | 看 `cite_keys_missing_from_library` —— ingest 缺失论文，或重 compose |
 
 ---
 
 ## 参考
 
-- SKILL 源：`skills/paic-paper-plan/SKILL.md`
-- 代码事实来源：`src/paic/schemas/paper_plan.py` / `claim.py` / `revision.py` / `related_work.py`
-- 编排：`src/paic/latex/paragraph_compose.py` / `src/paic/library/retrieval.py` / `src/paic/library/clustering.py` / `src/paic/library/claims.py` / `src/paic/library/revisions.py`
-- 提交前检查：[quality-gate.md](quality-gate.md)
+- 提交前一致性检查：[quality-gate.md](quality-gate.md)
+- 配置（路由 / host orchestration / 节流）：[configuration.md](configuration.md)

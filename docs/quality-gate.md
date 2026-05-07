@@ -4,30 +4,22 @@
 
 `/paic-finalize` 是提交前的最后一道**论文级**检查。它跑 8 类 paper-level 校验，把 LaTeX 语法之外的全局一致性问题暴露出来。
 
-`latex/guard.py` 检查的是**语法**（cite_key 在白名单里、`\begin{}` 与 `\end{}` 配对、花括号平衡）。`/paic-finalize` 检查的是**论文级一致性**（contribution 数对不对、numeric 有没有出处、强声明有没有支持）。两者互补，发版前都要过。
+PAI-C 在 `/paic-draft` 写盘时已经把 LaTeX **语法**层的硬错（`\cite{}` 不在白名单、`\begin/\end` 不配对、大括号不平衡）拦在外面；`/paic-finalize` 检查的是**论文级一致性**（contribution 数对不对、numeric 有没有出处、强声明有没有支持）。两者互补，发版前都要过。
 
 > Note: 跑 `/paic-finalize` 之前，跑过 `/paic-paper-plan` + `/paic-draft compose` 才能让大部分检查发挥作用。`paper_plan.yaml` / `claims.yaml` 缺失时部分检查会静默跳过。
 
 ---
 
-## 工具签名
+## 输出形态
 
-```text
-paic_quality_gate_run(project_dir, compile_check=False, overrides=None)
-```
-
-返回：
+每条 issue 含：
 
 ```yaml
-passed: true | false
-issue_count: <int>
-issues:
-  - kind: <kind>            # 8 类之一
-    severity: blocker|major|minor|info
-    target: "01_intro" | "CL3" | "abstract/intro/conclusion"
-    detail: "..."
-    actionable_fix: "..."
-overrides: ["unresolved_todos", ...]   # 用户传入的跳过类别
+kind: <8 类之一>
+severity: blocker | major | minor | info
+target: "01_intro" | "CL3" | "abstract/intro/conclusion"
+detail: "..."
+actionable_fix: "..."
 ```
 
 `passed=true` 当且仅当**没有 major / blocker** 严重度的 issue 幸存（info / minor 仅供参考）。
@@ -93,24 +85,17 @@ overrides: ["unresolved_todos", ...]   # 用户传入的跳过类别
 - 内部数字：attach experiment_id（claim 的 supporting_experiments 加该实验 id）
 - 外部数字（引用别的 paper）：attach cite_key 到 required_citations
 
-### 8. `latex_compile_warnings`（opt-in stub）
+### 8. `latex_compile_warnings`（opt-in，预留）
 
-**触发**：用户传 `compile_check=True` 时本应跑 `latexmk -pdf` 解析 .log。**当前 phase 10 是 stub**——永远返回 []。后续 issue 实装。
+**触发**：当 `--compile-check` 启用时本应解析 LaTeX 编译日志。**当前 stub**——永远返回 `[]`，后续版本实装。
 
-**临时方案**：本地 `latexmk -pdf drafts/main.tex` 兜底。
+**临时方案**：本地 `latexmk -pdf drafts/main.tex` 兜底，或交给 Overleaf 编译查看（[overleaf-sync.md](overleaf-sync.md)）。
 
 ---
 
-## `overrides=[kind]` 用法
+## Overrides 用法
 
-```text
-paic_quality_gate_run(
-  project_dir=<cwd>,
-  overrides=["unresolved_todos", "section_length_balance"],
-)
-```
-
-把列出 kind 的 issue 从输出里**静默删除**，不计入 `passed` 判定。常用于：
+调用时附加 `overrides=["unresolved_todos", "section_length_balance"]` 把列出 kind 的 issue 从输出里**静默删除**，不计入 `passed` 判定。常用于：
 
 - 已知 TODO，赶 deadline，先发再说
 - 评审人接受的章节长度偏差
@@ -148,17 +133,13 @@ issue 与对应工具的接力关系：
 
 ---
 
-## SKILL 流程
+## 用法
 
 ```text
 /paic-finalize
 ```
 
-1. `paic_quality_gate_run(project_dir=<cwd>)`
-2. 渲染 issues（按 severity 分组）。每条一行：`[<severity>] <kind> @ <target>` + detail + actionable_fix
-3. 决定下一步：全过 → 提示生成 PDF；有 blocker → 让用户逐条修；想跳过 → 重跑带 overrides
-
-详见 `skills/paic-finalize/SKILL.md`。
+PAI-C 跑完检查后按 severity 分组渲染 issues，每条一行：`[<severity>] <kind> @ <target>` + detail + actionable_fix。决定下一步：全过 → 提示生成 PDF；有 blocker → 让用户逐条修；想跳过特定 kind → 重跑带 overrides。
 
 ---
 
@@ -168,16 +149,14 @@ issue 与对应工具的接力关系：
 |---|---|
 | `passed=true` 但有 minor issues | 正常。`passed` 只看 major / blocker |
 | `contribution_consistency` 误报 | abstract 用 itemize / enumerate 显式列贡献，或 paper_plan 改条数 |
-| `unsupported_claims` 漏报 | 检查 claim 是否漏在 claims.yaml 里——compose 后没自动 extract 时手动跑 `paic_claims_extract` |
-| `numeric_provenance` 误报 | claim text 里数字也算（如版本号"2024"）；考虑 status=rejected 该 claim |
+| `unsupported_claims` 漏报 | 检查 claim 是否漏在 `claims.yaml` 里——compose 后没自动 extract 时让 PAI-C 手动补抽 |
+| `numeric_provenance` 误报 | claim text 里数字也算（如版本号「2024」）；不需要时把 claim 标 `status=rejected` |
 | `duplicate_paragraphs` 误报跨 abstract 与 intro | abstract 本来就是 intro 浓缩；可 override 该 kind |
-| `compile_check=True` 没真跑 latexmk | phase 10 stub。本地 `latexmk -pdf` 兜底 |
+| `--compile-check` 没真跑 latexmk | 当前 stub，本地 `latexmk -pdf` 兜底 |
 
 ---
 
 ## 参考
 
-- SKILL 源：`skills/paic-finalize/SKILL.md`
-- 代码事实来源：`src/paic/latex/quality_gate.py`（每个 check 函数即一类，docstring 即此文档来源）
 - 写作侧前置工具：[paper-plan.md](paper-plan.md)
-- LaTeX 语法层 guard：`src/paic/latex/guard.py`（独立、不可关）
+- 提交流程整体：[workflow.md § Paper-quality 高级阶段](workflow.md#paper-quality-高级阶段)

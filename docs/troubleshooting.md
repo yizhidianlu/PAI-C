@@ -125,7 +125,7 @@ PAI-C 走完四级 fallback 都没找到全文。响应里的 `text_source` 没�
   1. `paic doctor` 看 `arxiv storage` 行，确认根路径 OK
   2. arxiv MCP 自己有没下载完？让 Claude 调 `mcp__arxiv__list_papers` 看
   3. 路径对但 PAI-C 找不到？把 arxiv MCP 的实际存储路径加到 `~/.paic/config.yaml` 的 `arxiv_mcp_storage_paths`
-  4. 实在找不到，让 Claude 调 `mcp__arxiv__read_paper` 拿文本，再用 `paic_summarize_run(paper_text=...)` 旁路（详见 [configuration.md → arxiv 退路](configuration.md#arxiv-退路-paper_text-旁路)）
+  4. 实在找不到，走 `paper_text=` 旁路（让 Claude 调 `mcp__arxiv__read_paper` 拿文本回喂给 summarize），详见 [configuration.md](configuration.md#arxiv-退路-paper_text-旁路)
   5. **非 arxiv 论文** 没 PDF：重 `/paic-ingest <id>` 触发多平台下载试一次。如果该平台不托管 PDF（s2 / google_scholar / ssrn），PAI-C 暂无法本地化
 
 **pypdf 缓存**：成功提取过的 PDF text 缓存在 `~/.paic/cache/pdf_text/<sha[:16]>.txt`，按文件内容 hash。换了 PDF 自动 miss；强制重提就 `rm ~/.paic/cache/pdf_text/*` 即可。
@@ -218,9 +218,9 @@ providers:
 2. 完全重启 Claude Code（MCP server 重新加载 config）。
 3. 执行 `uv run paic info`，确认 `routing overrides:` 段包含 `summarize → host`。
 
-**`mcp__paic__paic_summarize_run` 返回 `mode: host_orchestration` 但 SKILL 没接住**
+**SKILL 没接住 host orchestration 模式响应**
 
-老版 SKILL.md 不识别 host_orchestration 响应。修复：
+老版 SKILL.md 不识别 host orchestration 响应。修复：
 
 ```bash
 uv run python scripts/install_skills.py
@@ -228,14 +228,14 @@ uv run python scripts/install_skills.py
 
 把最新 SKILL.md 复制到 `~/.claude/skills/`，然后完全重启 Claude Code。
 
-**`paic_summarize_persist` 反复返回 `schema_validation_failed`**
+**Host 模式下持久化反复 schema_validation_failed**
 
-Claude 主对话生成的 JSON 不符 schema。响应 `detail` 里有 pydantic 错误指明缺/错的字段。常见漏：
-- `key_results` / `limitations` / `techniques` 没传或不是 list[str]
+主对话生成的 JSON 不符 schema。响应 `detail` 字段会列出缺 / 错的字段。常见漏：
+- `key_results` / `limitations` / `techniques` 没传或不是 list of str
 - `problem` / `method` 是空串
-- 多了无关字段（PAI-C 严格按 `_SummaryFields` 校验）
+- 多了无关字段（PAI-C 严格按 schema 校验）
 
-让 Claude 按 `schema_hint` 重新生成。如果连续两次 schema 失败，提示用户切回非 host 模式作为应急（API 模式的 prompt 约束更强）。
+让 Claude 按 `schema_hint` 重新生成。连续两次失败 → 临时切回非 host 模式（API 模式的 prompt 约束更强）。
 
 **Review 节点在 host 模式下报错**
 
@@ -359,7 +359,7 @@ MCP server 不会热加载 config。**完全退出 Claude Code 再开**。重启
 | 大量 `unsupported_claims` | 跑 `/paic-draft compose` 让 claims.yaml 留下来；或手改 status / 加 supporting |
 | `contribution_consistency` 误报 | abstract / intro / conclusion 用 `\begin{itemize}` 显式列贡献，让计数器准 |
 | `numeric_provenance` 把版本号也算 | 那条 claim 改 `type=factual` 或 status=rejected |
-| 想跳过某类 | `paic_quality_gate_run(overrides=["unresolved_todos"])`；持久化要改源数据 |
+| 想跳过某类 | 重跑 `/paic-finalize` 时附 `overrides=["unresolved_todos"]`；持久化要改源数据，详见 [quality-gate.md](quality-gate.md) |
 
 完整 8 类 + override 决策树见 [quality-gate.md](quality-gate.md)。
 
