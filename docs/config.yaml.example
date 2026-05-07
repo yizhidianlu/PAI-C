@@ -148,6 +148,9 @@ providers:
 #  Overleaf 双向同步（可选）— /paic-draft 跑完后调 paic_draft_sync_overleaf
 # --------------------------------------------------------------------------
 #
+# 完整配置教程（含 Dropbox 客户端安装 + Overleaf 后台连接 + 故障排除）见
+# docs/overleaf-sync.md。下面只是字段速查。
+#
 # 机制：Overleaf 后台 Account Settings → Linked Accounts 连一次 Dropbox，
 # Overleaf 会在用户 Dropbox 自动创建 ~/Dropbox/Apps/Overleaf/，每个子目录
 # 对应一个 Overleaf project。PAI-C 把 <project>/.paic/drafts/ 镜像到对应

@@ -18,6 +18,8 @@
 | [configuration.md](configuration.md) | `~/.paic/config.yaml` 全字段：4 个 LLM backend、命名 profile、host orchestration、Semantic Scholar、arxiv 多根、节流、多平台检索、图像 |
 | [external-search.md](external-search.md) | 多平台论文检索（opt-in）：`paper-search-mcp` 接入 PubMed / bioRxiv / OpenAlex / IEEE 等 20+ 平台 |
 | [custom-templates.md](custom-templates.md) | 自定义 LaTeX 模板：项目本地放 ICLR / Nature / TPAMI / 校刊等 venue 模板，scaffold 派生 + 静态 `.sty` / `.cls` 自动拷贝 |
+| [zotero-sync.md](zotero-sync.md) | Zotero 集成（opt-in）：`/paic-ingest` 跑完后可选把论文同步到 Zotero（依赖独立 zotero-mcp，免 API key） |
+| [overleaf-sync.md](overleaf-sync.md) | Overleaf 双向同步（opt-in）：`/paic-draft` 跑完后可选基于 Dropbox 同步到 Overleaf project（免 API key、免 Premium） |
 | [troubleshooting.md](troubleshooting.md) | `paic doctor` 逐行解读 + 运行时错误目录 |
 
 > **四种鉴权模式**：(A) API key（默认）、(B) Pro/Max 订阅 `claude_agent_sdk`、(C) 订阅 + host orchestration、(D) 第三方 OpenAI 兼容中转站。详见 [getting-started.md § 4](getting-started.md) 与 [configuration.md](configuration.md)。
@@ -69,12 +71,12 @@ ingest 第 X, Y, Z 篇。
 |---|---|
 | `/paic-init` | 在当前目录建项目 |
 | `/paic-search` | 多源检索 + 去重（arXiv + Semantic Scholar；opt-in `paper-search-mcp` 后扩到 20+ 平台，见 [external-search.md](external-search.md)） |
-| `/paic-ingest` | 选定论文入库（自动触发 PDF 下载） |
+| `/paic-ingest` | 选定论文入库（自动触发 PDF 下载）；跑完可选同步到 Zotero，见 [zotero-sync.md](zotero-sync.md) |
 | `/paic-summarize` | 结构化摘要 |
 | `/paic-ideate` | 生成 idea（含用户筛选 checkpoint） |
 | `/paic-experiment` | 设计实验方案 |
 | `/paic-review` | 4-persona 多轮评审（含 rebuttal checkpoint） |
-| `/paic-draft` | LaTeX 写作三阶：`fill` / `polish` / `compose`。内置 `cvpr` / `neurips` / `ieee` + 项目本地自定义模板，见 [custom-templates.md](custom-templates.md) |
+| `/paic-draft` | LaTeX 写作三阶：`fill` / `polish` / `compose`。内置 `cvpr` / `neurips` / `ieee` + 项目本地自定义模板，见 [custom-templates.md](custom-templates.md)；跑完可选双向同步 Overleaf，见 [overleaf-sync.md](overleaf-sync.md) |
 | `/paic-figure` | 论文配图（Phase 1 raster，opt-in）：`plan` 提议 ≤4 张图位置；`generate` / `edit` / `variant` 逐张生成。仅适合 teaser / concept / domain；架构图用 TikZ、结果图用 matplotlib |
 | `/paic-resume` | 列出 / 继续未完成的 LangGraph run |
 | `/paic-status` | 项目全景 |
