@@ -1,4 +1,6 @@
-# Overleaf 双向同步（可选）
+# Overleaf 双向同步
+
+> **Optional** · `/paic-draft` 跑完后基于 Dropbox 把 `drafts/` 与 Overleaf project 双向同步 —— 免 API key、免 Overleaf Premium。
 
 PAI-C 在 `/paic-draft fill` / `polish` / `compose` 跑完后**可选**把 `<project>/.paic/drafts/` 与一个 Overleaf project 双向同步。机制是 Overleaf 后台的 **Dropbox 集成**——免 API key、免 Overleaf Premium git integration——PAI-C 把 drafts 镜像到 `~/Dropbox/Apps/Overleaf/<project>/`，Dropbox 客户端自动上传到 Overleaf；反向 Overleaf 上的改动通过 Dropbox 流回本地、PAI-C 用三方 merge 合并。
 

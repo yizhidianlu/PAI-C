@@ -1,4 +1,6 @@
-# Troubleshooting：从 `paic doctor` 到运行时错误
+# Troubleshooting
+
+> **Reference** · `paic doctor` 输出逐行解读、运行时错误目录、`/paic-finalize` 失败排查。
 
 第一道防线：`uv run paic doctor`。它一次跑完所有启动期检查，出错带 `fix:` 提示。**先把 doctor 跑绿再调试运行时**。
 

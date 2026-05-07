@@ -1,6 +1,8 @@
 # 自定义 LaTeX 模板
 
-PAI-C 内置了 3 个 venue 模板：`cvpr` / `neurips` / `ieee`。若的目标会议/期刊不在这三个里（ICLR / ICML / AAAI / Nature / TPAMI / ACL / EMNLP / 校刊 ……），可以在**项目本地**目录 `<project>/.paic/templates/<name>/` 下放自己的模板，`/paic-draft fill <name>` 会自动识别并使用。
+> **Optional** · 项目本地放 ICLR / Nature / TPAMI / 校刊等 venue 模板 —— `paic_draft_scaffold` 从内置模板派生，静态 `.sty` / `.cls` 自动拷贝。
+
+PAI-C 内置了 3 个 venue 模板：`cvpr` / `neurips` / `ieee`。若你的目标会议 / 期刊不在这三个里（ICLR / ICML / AAAI / Nature / TPAMI / ACL / EMNLP / 校刊 ……），可以在**项目本地**目录 `<project>/.paic/templates/<name>/` 下放自己的模板，`/paic-draft fill <name>` 会自动识别并使用。
 
 > **PAI-C 不替换内置模板**——`cvpr` / `neurips` / `ieee` 永远可用。自定义模板是**叠加**的；同名时项目本地优先（被标记为 `overrides_builtin: true`）。
 

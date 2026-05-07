@@ -1,5 +1,7 @@
 # 多平台论文检索
 
+> **Optional** · `/paic-search` 接入 PubMed / bioRxiv / OpenAlex / IEEE 等 20+ 平台 —— 依赖独立 [`paper-search-mcp`](https://github.com/openags/paper-search-mcp)，按研究领域选 preset。
+
 PAI-C 默认在 `/paic-search` 里调两条源：arXiv（经现有 arxiv MCP）+ Semantic Scholar（经 `paic_s2_search`）。这对 CS/ML 用户够用，但生物医学 / 经济 / 工程等领域离不开 PubMed、bioRxiv、IEEE Xplore、SSRN 这些专属库。
 
 PAI-C 通过 opt-in 接入上游 [`paper-search-mcp`](https://github.com/openags/paper-search-mcp)（独立 MCP server，覆盖 20+ 平台），让你在 `/paic-init` 时按研究领域选一组「论文来源平台」，`/paic-search` 自动 fan-out 到这些平台 + 现有两源 + 跨平台去重。

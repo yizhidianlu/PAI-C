@@ -1,5 +1,7 @@
 # Paper-quality gate
 
+> **Feature** · `/paic-finalize` 提交前 8 类 paper-level 一致性检查 —— `overrides=` 语义、决策树、修复路径。
+
 `/paic-finalize` 是提交前的最后一道**论文级**检查。它跑 8 类 paper-level 校验，把 LaTeX 语法之外的全局一致性问题暴露出来。
 
 `latex/guard.py` 检查的是**语法**（cite_key 在白名单里、`\begin{}` 与 `\end{}` 配对、花括号平衡）。`/paic-finalize` 检查的是**论文级一致性**（contribution 数对不对、numeric 有没有出处、强声明有没有支持）。两者互补，发版前都要过。

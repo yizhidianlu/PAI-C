@@ -1,5 +1,7 @@
 # 端到端工作流
 
+> **Reference** · 每个 `/paic-*` 的调用方式、`.paic/` 产出位置、典型耗时、路由 node、跨会话恢复。
+
 <p align="center">
   <img src="paic-workflow.png" alt="PAI-C workflow" width="900">
 </p>

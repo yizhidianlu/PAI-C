@@ -1,8 +1,6 @@
 # PAI-C 入门
 
-5 分钟从零到第一条流水线：安装 → 注册 Claude Code → 跑通 `init → search → ingest → summarize`。
-
-完整 9 步流水线见 [workflow.md](workflow.md)。
+> **Setup** · 5 分钟从零到第一条流水线 —— 安装、注册 Claude Code、跑通 `init → search → ingest → summarize`。完整 9 步链路见 [workflow.md](workflow.md)。
 
 ---
 

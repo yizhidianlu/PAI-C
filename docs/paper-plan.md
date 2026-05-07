@@ -1,5 +1,7 @@
 # Paper-quality 写作链路
 
+> **Feature** · `paper_plan` / `claims` / retrieval / paragraph compose / clusters / revisions —— v0.1 之上让生成出的论文保持全局一致的 paper-quality 工具链。
+
 PAI-C 在 v0.1 之上加了一组 **paper-quality** 工具，把「散点式生成 → 一致性论文」的链路串起来：全局论点锁在 `paper_plan.yaml`，强声明留痕到 `claims.yaml`，章节按 BM25 检索证据、按段落级 outline 写、按 cluster 组织 related work，review 评论自动转 RevisionTask。
 
 本文档覆盖**写作侧**所有新功能。提交前的一致性检查见 [quality-gate.md](quality-gate.md)。

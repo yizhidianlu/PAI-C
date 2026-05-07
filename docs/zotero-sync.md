@@ -1,6 +1,8 @@
-# Zotero 同步（可选）
+# Zotero 同步
 
-PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 / PDF 附件 / collection 组织）同步到本地或云端 Zotero。机制是 SKILL 层调用独立的 [zotero-mcp-server](https://github.com/54yyyu/zotero-mcp)（**不在** PAI-C repo 内），不需要任何额外的 PAI-C 配置——只要 zotero-mcp 注册到 Claude Code，PAI-C 的 `/paic-ingest` 就会自动检测到并询问用户是否同步。
+> **Optional** · `/paic-ingest` 跑完后同步本批论文到 Zotero —— 依赖独立 [`zotero-mcp`](https://github.com/54yyyu/zotero-mcp)，免 API key（本地模式走 Zotero 桌面 app 端口 23119）。
+
+PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 / PDF 附件 / collection 组织）同步到本地或云端 Zotero。机制是 SKILL 层调用独立的 zotero-mcp-server（**不在** PAI-C repo 内），不需要任何额外的 PAI-C 配置——只要 zotero-mcp 注册到 Claude Code，PAI-C 的 `/paic-ingest` 就会自动检测到并询问用户是否同步。
 
 > **PAI-C 不替换 zotero-mcp**——zotero-mcp 是独立的、可被 ChatGPT / Cherry Studio / Cursor 等其他客户端共用的 MCP server；PAI-C 只是消费它的几个 tool（`zotero_get_collections` / `zotero_create_collection` / `zotero_add_by_doi` / `zotero_add_by_url`）。
 

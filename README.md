@@ -6,7 +6,7 @@
 
 PAI-C runs the STEM paper workflow inside Claude Code — search and ingest literature, generate ideas, design experiments, run multi-agent reviews, and write LaTeX drafts. It ships as a set of `/paic-*` slash commands backed by a Python MCP server with LangGraph orchestration.
 
-> **First time?** Walkthrough at [`docs/getting-started.md`](docs/getting-started.md) · full workflow at [`docs/workflow.md`](docs/workflow.md) · doc index at [`docs/USAGE.md`](docs/USAGE.md).
+> **First time?** Walkthrough at [`docs/getting-started.md`](docs/getting-started.md) · full workflow at [`docs/workflow.md`](docs/workflow.md) · doc index at [`docs/`](docs/README.md).
 
 ---
 

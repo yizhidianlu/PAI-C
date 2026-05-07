@@ -1,6 +1,6 @@
 # PAI-C 本地更新
 
-`git pull` 后让改动生效——按改动类型决定动作。
+> **Reference** · `git pull` 后让改动生效 —— 按改动类型决定 `install_skills` / `register_mcp` / 重启顺序。
 
 > ⚠ **必须重启 Claude Code，否则新功能静默失效**
 >

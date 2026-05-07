@@ -1,6 +1,21 @@
-# Configuration 参考：`~/.paic/config.yaml` 全字段
+# Configuration 参考
 
-`register_mcp.py` 首次运行时会从 [`docs/config.yaml.example`](config.yaml.example) seed 一份到 `~/.paic/config.yaml`。**已存在则不覆盖**，所以你之后改的不会被脚本擦掉。
+> **Reference** · `~/.paic/config.yaml` 全字段 —— 4 个 LLM backend / 命名 profile / host orchestration / 节流 / 多平台检索 / ideate panel diversification。
+
+## 目录
+
+- [顶层字段](#顶层字段)
+- [arxiv 存储路径](#arxiv-存储路径) · [arxiv MCP 节流](#arxiv-mcp-节流)
+- [Provider](#provider) · [Anthropic 双路](#anthropic-双路) · [OpenAI 双路](#openai-双路) · [Semantic Scholar](#semantic-scholar)
+- [路由 routing](#路由-routing) · [9 个节点标签](#9-个节点标签) · [命名 provider profile](#命名-provider-profile同-provider-不同模型)
+- [Host Orchestration](#host-orchestration订阅复用零外部-llm-调用)
+- [外部检索（多平台 paper-search-mcp）](#外部检索多平台-paper-search-mcp)
+- [ideate panel diversification](#ideate-panel-diversification)
+- [改完之后](#改完之后)
+
+---
+
+`register_mcp.py` 首次运行时会从 [`config.yaml.example`](config.yaml.example) seed 一份到 `~/.paic/config.yaml`。**已存在则不覆盖**，所以你之后改的不会被脚本擦掉。
 
 > 改完 `~/.paic/config.yaml` 必须**完全重启 Claude Code**，MCP server 不会热加载。
 
