@@ -49,5 +49,40 @@ class PaperSummary(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     techniques: list[str] = Field(default_factory=list)
     relevance_to_project: str | None = None
+    # §quality phase 3 — structured evidence fields. All Optional so old
+    # summary yamls (pre-phase-3, six-field shape) load without
+    # validation errors.
+    contribution_type: str | None = None
+    """One of ``method`` / ``system`` / ``benchmark`` / ``survey`` /
+    ``theory`` / ``application`` / ``empirical_study`` (free-form, but
+    these are the common buckets)."""
+
+    datasets: list[str] = Field(default_factory=list)
+    """Dataset names referenced (e.g. ``"BCI-IV-2a"``, ``"ImageNet-1k"``)."""
+
+    baselines: list[str] = Field(default_factory=list)
+    """Named baseline methods compared against."""
+
+    metrics: list[str] = Field(default_factory=list)
+    """Evaluation metric names."""
+
+    numeric_results: list[str] = Field(default_factory=list)
+    """Free-form numeric claims, e.g. ``"+3.2% balanced accuracy on BCI-IV-2a"``."""
+
+    assumptions: list[str] = Field(default_factory=list)
+    """Stated or implicit assumptions the method depends on."""
+
+    failure_modes: list[str] = Field(default_factory=list)
+    """Conditions where the method underperforms or breaks down."""
+
+    open_questions: list[str] = Field(default_factory=list)
+    """Future-work items the paper itself identifies."""
+
+    citation_claims: list[str] = Field(default_factory=list)
+    """Claims this paper makes that other work would want to cite back at it."""
+
+    quote_spans: list[str] = Field(default_factory=list)
+    """Verbatim short quotes useful for direct citation. Keep ≤25 words each."""
+
     summarized_at: datetime
     summarizer_model: str

@@ -422,3 +422,156 @@ def test_persist_uses_cite_key_filename(doi_project):
     assert out["persisted"] is True
     assert out["cite_key"] == cite_key
     assert (doi_project / f".paic/library/summaries/{cite_key}.yaml").is_file()
+
+
+# ----------------------------------------------------- §quality phase 3
+
+
+def test_phase3_legacy_summary_yaml_loads(project, tmp_path, monkeypatch):
+    """Pre-phase-3 summaries (no datasets / baselines / etc fields) must
+    still load and round-trip without ValidationError."""
+    from paic.schemas.paper import PaperSummary
+    legacy = {
+        "paper": {"arxiv_id": "2401.12345", "title": "Sample", "authors": ["A"]},
+        "problem": "P", "method": "M",
+        "key_results": ["r1"], "limitations": ["l1"], "techniques": ["t1"],
+        "summarized_at": "2024-01-01T00:00:00+00:00",
+        "summarizer_model": "old-model",
+    }
+    summary = PaperSummary.model_validate(legacy)
+    # New fields default to empty / None.
+    assert summary.datasets == []
+    assert summary.baselines == []
+    assert summary.contribution_type is None
+    # Round-trip without losing legacy content.
+    reloaded = PaperSummary.model_validate(summary.model_dump(mode="json"))
+    assert reloaded.problem == "P"
+
+
+def test_phase3_full_summary_round_trip():
+    from paic.schemas.paper import PaperSummary
+    full = {
+        "paper": {"arxiv_id": "p1", "title": "x", "authors": ["A"]},
+        "problem": "P", "method": "M",
+        "key_results": [], "limitations": [], "techniques": [],
+        "contribution_type": "method",
+        "datasets": ["BCI-IV-2a", "PhysioNet"],
+        "baselines": ["CSP", "EEGNet"],
+        "metrics": ["balanced accuracy", "Cohen's kappa"],
+        "numeric_results": ["+3.2% balanced accuracy on BCI-IV-2a"],
+        "assumptions": ["Stationary subject"],
+        "failure_modes": ["High inter-session variance"],
+        "open_questions": ["Cross-subject zero-shot?"],
+        "citation_claims": ["Fisher score top-k matches CSP."],
+        "quote_spans": ["Channel pruning is data-efficient."],
+        "summarized_at": "2024-01-01T00:00:00+00:00",
+        "summarizer_model": "stub",
+    }
+    summary = PaperSummary.model_validate(full)
+    assert summary.contribution_type == "method"
+    assert "BCI-IV-2a" in summary.datasets
+    assert len(summary.numeric_results) == 1
+
+
+def test_phase3_summarize_run_passes_through_new_fields(project, tmp_path, monkeypatch):
+    storage = tmp_path / "arxiv_storage"
+    storage.mkdir()
+    (storage / "2401.12345.md").write_text("# Sample\n\nBody.", encoding="utf-8")
+
+    from paic.config import reset_config_cache
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path / ".paic_alt"))
+    reset_config_cache()
+    monkeypatch.setattr(
+        "paic.mcp_server.tools.summarize.read_local_markdown",
+        lambda paper_id, cfg=None: f"# Sample\n\n{(storage / '2401.12345.md').read_text(encoding='utf-8')}",
+    )
+
+    fields = _SummaryFields(
+        problem="P", method="M",
+        key_results=["k1"], limitations=["l1"], techniques=["t1"],
+        contribution_type="method",
+        datasets=["BCI-IV-2a"],
+        baselines=["CSP"],
+        metrics=["balanced accuracy"],
+        numeric_results=["+3.2% on BCI-IV-2a"],
+        citation_claims=["Fisher score is competitive."],
+    )
+    out = summarize_run(str(project), "2401.12345", llm=_StubLLM(fields))
+    assert "error" not in out, out
+    structured = out["structured"]
+    assert structured["contribution_type"] == "method"
+    assert structured["datasets"] == ["BCI-IV-2a"]
+    assert structured["baselines"] == ["CSP"]
+    # Render markdown should contain the new sections.
+    md_text = (project / ".paic/library/summaries/arxiv_2401_12345.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Datasets" in md_text
+    assert "BCI-IV-2a" in md_text
+    assert "## Numeric Results" in md_text
+    assert "## Baselines" in md_text
+
+
+def test_phase3_render_omits_empty_sections(project, tmp_path, monkeypatch):
+    """When new fields are empty, their headings must NOT appear in the
+    rendered markdown — so old-style summaries don't sprout empty sections."""
+    storage = tmp_path / "arxiv_storage"
+    storage.mkdir()
+    (storage / "2401.12345.md").write_text("# Sample\n\nBody.", encoding="utf-8")
+
+    from paic.config import reset_config_cache
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path / ".paic_alt2"))
+    reset_config_cache()
+    monkeypatch.setattr(
+        "paic.mcp_server.tools.summarize.read_local_markdown",
+        lambda paper_id, cfg=None: "# Sample\n\nbody",
+    )
+
+    fields = _SummaryFields(problem="P", method="M")  # all phase-3 fields default-empty
+    summarize_run(str(project), "2401.12345", llm=_StubLLM(fields))
+    md_text = (project / ".paic/library/summaries/arxiv_2401_12345.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Datasets" not in md_text
+    assert "## Baselines" not in md_text
+    assert "## Numeric Results" not in md_text
+    assert "Contribution type:" not in md_text
+
+
+def test_phase3_persist_accepts_new_fields(doi_project):
+    from paic.mcp_server.tools.summarize import summarize_persist
+    out = summarize_persist(
+        str(doi_project),
+        "37925884",  # PMID
+        structured={
+            "problem": "P", "method": "M",
+            "key_results": [], "limitations": [], "techniques": [],
+            "contribution_type": "system",
+            "datasets": ["MIMIC-III"],
+            "baselines": ["LSTM"],
+            "metrics": ["AUC"],
+            "numeric_results": ["AUC=0.84"],
+        },
+    )
+    assert out["persisted"] is True
+    structured = out["structured"]
+    assert structured["contribution_type"] == "system"
+    assert structured["datasets"] == ["MIMIC-III"]
+
+
+def test_phase3_persist_legacy_payload_still_works(doi_project):
+    """Pre-phase-3 host-orchestrated callers (only 5 keys) must still work."""
+    from paic.mcp_server.tools.summarize import summarize_persist
+    out = summarize_persist(
+        str(doi_project),
+        "37925884",
+        structured={
+            "problem": "P", "method": "M",
+            "key_results": [], "limitations": [], "techniques": [],
+        },
+    )
+    assert out["persisted"] is True
+    structured = out["structured"]
+    # New fields default to empty / None — not absent.
+    assert structured["datasets"] == []
+    assert structured["contribution_type"] is None

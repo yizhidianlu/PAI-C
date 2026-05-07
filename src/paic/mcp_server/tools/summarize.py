@@ -41,6 +41,19 @@ class _SummaryFields(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     techniques: list[str] = Field(default_factory=list)
     relevance_to_project: str | None = None
+    # §quality phase 3 — Optional structured evidence fields. Legacy LLM
+    # responses that don't include them validate fine; new prompts encourage
+    # the model to populate them.
+    contribution_type: str | None = None
+    datasets: list[str] = Field(default_factory=list)
+    baselines: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
+    numeric_results: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    failure_modes: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    citation_claims: list[str] = Field(default_factory=list)
+    quote_spans: list[str] = Field(default_factory=list)
 
 
 MAX_PAPER_CHARS = 120_000  # ~30k tokens, well under the model context window
@@ -127,6 +140,35 @@ def _render_summary_markdown(summary: PaperSummary) -> str:
     lines += ["", "## Limitations", ""]
     lines.extend(f"- {l}" for l in summary.limitations)
     lines += ["", "## Techniques", "", ", ".join(summary.techniques) or "—"]
+    # §quality phase 3 — render new evidence fields when populated.
+    # Each section is omitted when its list is empty so old summaries
+    # don't sprout empty headers.
+    if summary.contribution_type:
+        lines += ["", f"**Contribution type:** {summary.contribution_type}"]
+    if summary.datasets:
+        lines += ["", "## Datasets", "", ", ".join(summary.datasets)]
+    if summary.baselines:
+        lines += ["", "## Baselines", "", ", ".join(summary.baselines)]
+    if summary.metrics:
+        lines += ["", "## Metrics", "", ", ".join(summary.metrics)]
+    if summary.numeric_results:
+        lines += ["", "## Numeric Results", ""]
+        lines.extend(f"- {r}" for r in summary.numeric_results)
+    if summary.assumptions:
+        lines += ["", "## Assumptions", ""]
+        lines.extend(f"- {a}" for a in summary.assumptions)
+    if summary.failure_modes:
+        lines += ["", "## Failure Modes", ""]
+        lines.extend(f"- {f}" for f in summary.failure_modes)
+    if summary.open_questions:
+        lines += ["", "## Open Questions", ""]
+        lines.extend(f"- {q}" for q in summary.open_questions)
+    if summary.citation_claims:
+        lines += ["", "## Citation Claims", ""]
+        lines.extend(f"- {c}" for c in summary.citation_claims)
+    if summary.quote_spans:
+        lines += ["", "## Quote Spans", ""]
+        lines.extend(f'> "{q}"' for q in summary.quote_spans)
     if summary.relevance_to_project:
         lines += ["", "## Relevance to Project", "", summary.relevance_to_project]
     return "\n".join(lines) + "\n"
@@ -135,9 +177,12 @@ def _render_summary_markdown(summary: PaperSummary) -> str:
 HOST_INSTRUCTIONS = (
     "PAI-C is configured to host-orchestrate the `summarize` node. Generate a "
     "JSON object matching `schema_hint` directly from the `markdown` body "
-    "below — write the keys problem / method / key_results / limitations / "
-    "techniques / relevance_to_project as you would with any LLM call. Then "
-    "call `mcp__paic__paic_summarize_persist(project_dir=<cwd>, "
+    "below. Required keys: problem / method / key_results / limitations / "
+    "techniques / relevance_to_project. §quality phase 3 added optional keys: "
+    "contribution_type, datasets, baselines, metrics, numeric_results, "
+    "assumptions, failure_modes, open_questions, citation_claims, quote_spans "
+    "— populate them when the paper provides the info; leave [] / null "
+    "otherwise. Then call `mcp__paic__paic_summarize_persist(project_dir=<cwd>, "
     "paper_id=<id>, structured={...your json...})` to validate and write it "
     "to disk. Do NOT call `paic_summarize_run` again for this paper."
 )
@@ -367,6 +412,16 @@ def summarize_run(
         limitations=fields.limitations,
         techniques=fields.techniques,
         relevance_to_project=fields.relevance_to_project,
+        contribution_type=fields.contribution_type,
+        datasets=fields.datasets,
+        baselines=fields.baselines,
+        metrics=fields.metrics,
+        numeric_results=fields.numeric_results,
+        assumptions=fields.assumptions,
+        failure_modes=fields.failure_modes,
+        open_questions=fields.open_questions,
+        citation_claims=fields.citation_claims,
+        quote_spans=fields.quote_spans,
         summarized_at=datetime.now(UTC),
         summarizer_model=llm_client.model,
     )
@@ -442,7 +497,10 @@ def summarize_persist(
                 "Fix the JSON to match schema_hint and retry. Required keys: "
                 "problem (str), method (str), key_results (list[str]), "
                 "limitations (list[str]), techniques (list[str]). Optional: "
-                "relevance_to_project (str)."
+                "relevance_to_project (str), contribution_type (str), "
+                "datasets / baselines / metrics / numeric_results / "
+                "assumptions / failure_modes / open_questions / "
+                "citation_claims / quote_spans (list[str])."
             ),
         }
 
@@ -454,6 +512,16 @@ def summarize_persist(
         limitations=fields.limitations,
         techniques=fields.techniques,
         relevance_to_project=fields.relevance_to_project,
+        contribution_type=fields.contribution_type,
+        datasets=fields.datasets,
+        baselines=fields.baselines,
+        metrics=fields.metrics,
+        numeric_results=fields.numeric_results,
+        assumptions=fields.assumptions,
+        failure_modes=fields.failure_modes,
+        open_questions=fields.open_questions,
+        citation_claims=fields.citation_claims,
+        quote_spans=fields.quote_spans,
         summarized_at=datetime.now(UTC),
         summarizer_model=summarizer_model or "host:claude-code-main",
     )

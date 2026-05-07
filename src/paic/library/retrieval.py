@@ -99,18 +99,26 @@ class _IndexedPaper:
 def _join_summary_text(record: dict[str, Any]) -> str:
     """Extract the full searchable text from a structured summary yaml dict.
 
-    Pulls the ``problem`` / ``method`` / ``key_results`` / ``limitations`` /
-    ``techniques`` / ``relevance_to_project`` fields. Resilient to missing
-    fields and non-dict shapes.
+    Pulls the legacy fields (``problem`` / ``method`` / ``key_results`` /
+    ``limitations`` / ``techniques`` / ``relevance_to_project``) plus the
+    §quality phase 3 expansion (``datasets`` / ``baselines`` / ``metrics`` /
+    ``numeric_results`` / ``assumptions`` / ``failure_modes`` /
+    ``open_questions`` / ``citation_claims`` / ``quote_spans`` /
+    ``contribution_type``). Resilient to missing fields and non-dict shapes.
     """
     if not isinstance(record, dict):
         return ""
     parts: list[str] = []
-    for key in ("problem", "method", "relevance_to_project"):
+    for key in ("problem", "method", "relevance_to_project", "contribution_type"):
         v = record.get(key)
         if isinstance(v, str) and v:
             parts.append(v)
-    for key in ("key_results", "limitations", "techniques"):
+    for key in (
+        "key_results", "limitations", "techniques",
+        "datasets", "baselines", "metrics", "numeric_results",
+        "assumptions", "failure_modes", "open_questions",
+        "citation_claims", "quote_spans",
+    ):
         v = record.get(key)
         if isinstance(v, list):
             parts.extend(str(x) for x in v if x)
