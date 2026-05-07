@@ -73,6 +73,25 @@ def project_with_idea(tmp_path, monkeypatch):
     from paic.workspace.store import save_yaml
 
     save_yaml(p / ".paic/ideas/idea_test.yaml", idea.model_dump(mode="json"))
+    # Seed a library entry that matches the _FullStubLLM baseline's paper_ref
+    # so the phase-5 baseline_in_library check has something to resolve
+    # against. Real projects always have at least one ingested paper before
+    # /paic-experiment is invoked.
+    save_yaml(
+        p / ".paic/library/selected.yaml",
+        {
+            "papers": [
+                {
+                    "doi": "2010.csp",
+                    "title": "Common Spatial Pattern (test stub)",
+                    "authors": ["Test"],
+                    "year": 2010,
+                    "venue": "test",
+                    "source": "manual",
+                }
+            ]
+        },
+    )
     return p
 
 
@@ -184,6 +203,25 @@ def test_phase5_clean_plan_has_no_warnings(project_with_idea):
     assert plan["statistical_plan"] == ["5 seeds", "paired t-test", "Bonferroni-corrected"]
     assert plan["reproducibility"] == ["seed=42", "config logged via wandb", "torch==2.1.0"]
     assert plan["metrics"][0]["success_threshold"] == 2.0
+
+
+def test_baseline_in_library_warning_when_paper_ref_missing(project_with_idea, tmp_path):
+    """When a baseline.paper_ref isn't in selected.yaml, the verifier surfaces
+    a baseline_in_library warning so the user can /paic-ingest before compose
+    rejects the cite key downstream."""
+    # Replace the seeded library with one that does NOT contain the stub's
+    # paper_ref ("2010.csp") so the new check fires.
+    from paic.workspace.store import save_yaml as _save
+    _save(
+        project_with_idea / ".paic/library/selected.yaml",
+        {"papers": [{"doi": "10.9999/unrelated", "title": "Other", "authors": ["X"], "year": 2020}]},
+    )
+    out = experiment_start(str(project_with_idea), "idea_test", llm=_FullStubLLM())
+    yaml_path = project_with_idea / ".paic/experiments" / f"{out['experiment_id']}.yaml"
+    from paic.workspace.store import load_yaml
+    plan = load_yaml(yaml_path)
+    kinds = {w.split(":")[0] for w in plan["validation_warnings"]}
+    assert "baseline_in_library" in kinds
 
 
 def test_phase5_legacy_plan_emits_warnings(project_with_idea):

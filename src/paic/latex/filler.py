@@ -200,6 +200,17 @@ def _resolve_experiment(paths: ProjectPaths, experiment_id: str | None) -> dict[
     }
 
 
+# Built-in templates reference upstream .cls / .sty files but cannot ship them
+# (license / vendor distribution constraints). When fill_draft copies zero
+# assets, ``static_assets_missing_warning`` lists the expected files so the
+# user knows compile will fail until they drop them into ``.paic/drafts/``.
+_BUILTIN_VENUE_ASSETS: dict[str, tuple[str, ...]] = {
+    "ieee": ("IEEEtran.cls",),
+    "neurips": ("neurips_2024.sty",),
+    "cvpr": ("cvpr.sty",),
+}
+
+
 def fill_draft(
     paths: ProjectPaths,
     *,
@@ -214,7 +225,10 @@ def fill_draft(
 
     Returns ``{"main_tex", "refs_bib", "sections_created", "bib_keys", "template",
     "template_kind", "idea_id", "experiment_id", "static_assets_copied",
-    "static_assets_skipped"}``.
+    "static_assets_skipped", "static_assets_missing_warning"}``. The last
+    field is non-empty only for built-in venue templates whose required
+    .cls / .sty file isn't bundled (license-constrained), prompting the
+    SKILL to tell the user to drop the file into ``.paic/drafts/``.
 
     Raises:
         TemplateNotFound: when ``template`` doesn't match any built-in or
@@ -265,6 +279,16 @@ def fill_draft(
     # with the template so the user no longer has to manually drop them in.
     asset_report = copy_static_assets(record.root, drafts_dir)
 
+    # Built-in venue templates reference .cls / .sty files that they don't
+    # bundle (license). Surface the gap so latex compile failures are
+    # diagnosed up front rather than at the build step.
+    missing_warning: list[str] = []
+    if record.kind == "builtin" and not asset_report["copied"]:
+        expected = _BUILTIN_VENUE_ASSETS.get(record.name, ())
+        for filename in expected:
+            if not (drafts_dir / filename).is_file():
+                missing_warning.append(filename)
+
     return {
         "main_tex": str(main_path),
         "refs_bib": str(drafts_dir / "refs.bib"),
@@ -276,4 +300,5 @@ def fill_draft(
         "experiment_id": experiment_id,
         "static_assets_copied": asset_report["copied"],
         "static_assets_skipped": asset_report["skipped"],
+        "static_assets_missing_warning": missing_warning,
     }

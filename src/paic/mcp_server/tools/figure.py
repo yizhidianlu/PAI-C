@@ -133,6 +133,18 @@ def figure_plan(
         draft_p = Path(draft_path).expanduser().resolve()
         if not draft_p.exists():
             return {"error": "draft_not_found", "draft_path": str(draft_p)}
+        if draft_p.is_dir():
+            return {
+                "error": "draft_path_must_be_file",
+                "draft_path": str(draft_p),
+                "hint": (
+                    "draft_path expects a single .tex file (e.g. "
+                    "'.paic/drafts/main.tex' or "
+                    "'.paic/drafts/sections/02_related.tex'). To plan from "
+                    "the project's idea + experiment YAMLs without a draft, "
+                    "omit draft_path entirely."
+                ),
+            }
 
     client = llm or get_default_client()
     try:

@@ -23,6 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from ulid import ULID
 
+from paic.latex.filler import _cite_key
 from paic.llm.client import LLMClient
 from paic.llm.prompts import load_prompt
 from paic.schemas.experiment import (
@@ -100,10 +101,64 @@ def _format_idea_for_llm(idea: dict[str, Any]) -> str:
     )
 
 
+def _load_library_summary(paths: ProjectPaths, cap: int = 40) -> tuple[list[str], list[dict[str, Any]]]:
+    """Return (cite_keys, entries) for the project library, capped to ``cap``.
+
+    ``entries`` is the trimmed view passed to the LLM as a baseline-source
+    whitelist; ``cite_keys`` is a flat list used by the verifier.
+    """
+    selected = load_yaml(paths.selected_yaml) or {}
+    if not isinstance(selected, dict):
+        return [], []
+    records = list(selected.get("papers") or [])[:cap]
+    entries: list[dict[str, Any]] = []
+    cite_keys: list[str] = []
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        ck = _cite_key(r)
+        cite_keys.append(ck)
+        entries.append(
+            {
+                "cite_key": ck,
+                "arxiv_id": r.get("arxiv_id"),
+                "doi": r.get("doi"),
+                "title": (r.get("title") or "").strip(),
+                "year": r.get("year"),
+            }
+        )
+    return cite_keys, entries
+
+
+def _format_library_for_llm(entries: list[dict[str, Any]]) -> str:
+    """Render the library cite-key whitelist as a compact bullet list."""
+    if not entries:
+        return (
+            "### LIBRARY (project's ingested papers — baseline whitelist)\n"
+            "(empty — only return baselines you genuinely know; signal the "
+            "user to ingest more papers via /paic-ingest)\n"
+        )
+    lines = ["### LIBRARY (project's ingested papers — baseline whitelist)"]
+    lines.append(
+        "Prefer baselines whose paper_ref is in this list. If the strongest "
+        "baseline is missing, you may still include it but its paper_ref "
+        "should be the upstream id (arxiv_id / DOI) — the verifier will "
+        "warn the user to /paic-ingest it."
+    )
+    for e in entries:
+        ref = e.get("arxiv_id") or e.get("doi") or "(no-id)"
+        lines.append(
+            f"- [{e['cite_key']}] {e['title']} ({e.get('year') or '?'}) — ref: {ref}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _propose_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]:
     idea = state["idea"]
     constraints = state.get("constraints") or {}
+    cite_keys, library_entries = _load_library_summary(deps.paths)
     user_msg = _format_idea_for_llm(idea)
+    user_msg += "\n" + _format_library_for_llm(library_entries)
     if constraints:
         kv = "\n".join(f"- {k}: {v}" for k, v in constraints.items())
         user_msg += f"\n### CONSTRAINTS\n{kv}\n"
@@ -116,7 +171,9 @@ def _propose_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any
         temperature=0.2,
         node="experiment_design",
     )
-    return {"plan": fields.model_dump()}
+    plan = fields.model_dump()
+    plan["_library_cite_keys"] = cite_keys  # consumed by _verify_plan, dropped before persist
+    return {"plan": plan}
 
 
 def _verify_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]:
@@ -130,6 +187,10 @@ def _verify_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]
 
     Concerns checked (one per slice from the phase-5 spec):
     - ``baseline_retrieve``: every Baseline has ``paper_ref`` set
+    - ``baseline_in_library``: each ``paper_ref`` is one of the project's
+      ingested papers (cite_key, arxiv_id, or DOI in selected.yaml). Baselines
+      that aren't in the library still pass design but are surfaced so the
+      user can /paic-ingest them before the compose step's cite-guard rejects.
     - ``dataset_check``: every Dataset has ``license_note`` and at least
       one ``splits`` entry
     - ``metric_select``: at least one metric flagged ``primary=true``
@@ -141,13 +202,39 @@ def _verify_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]
     """
     plan = state.get("plan") or {}
     warnings: list[str] = []
+    library_cite_keys: set[str] = set(plan.get("_library_cite_keys") or [])
+    library_arxiv_ids: set[str] = {
+        ck.removeprefix("arxiv_").replace("_", ".", 1)
+        for ck in library_cite_keys
+        if ck.startswith("arxiv_")
+    }
 
     baselines = plan.get("baselines") or []
     for i, b in enumerate(baselines):
-        if isinstance(b, dict) and not b.get("paper_ref"):
+        if not isinstance(b, dict):
+            continue
+        ref = b.get("paper_ref")
+        if not ref:
             warnings.append(
                 f"baseline_retrieve: baseline #{i + 1} '{b.get('name', '?')}' "
                 "has no paper_ref; consider attaching arxiv_id / doi."
+            )
+            continue
+        # baseline_in_library: paper_ref should be ingested so the compose
+        # step's \cite{} guard accepts it. Match against cite_key directly,
+        # the arxiv_id form (LLM typically returns "2102.09050"), or DOI
+        # (slug-derived cite_keys keep the doi prefix).
+        ref_norm = str(ref).strip().lower()
+        in_lib = (
+            ref_norm in library_cite_keys
+            or ref_norm in library_arxiv_ids
+            or any(ck.endswith(ref_norm.replace("/", "_").replace(".", "_").replace("-", "_")) for ck in library_cite_keys if ck.startswith("doi_"))
+        )
+        if not in_lib:
+            warnings.append(
+                f"baseline_in_library: baseline #{i + 1} '{b.get('name', '?')}' "
+                f"paper_ref={ref!r} is not in library/selected.yaml; run "
+                "/paic-ingest before compose, or downstream \\cite{} guard will reject."
             )
     if not baselines:
         warnings.append("baseline_retrieve: no baselines listed.")
@@ -206,7 +293,10 @@ def _verify_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]
             "version pinning, hardware spec."
         )
 
-    return {"plan": {**plan, "validation_warnings": warnings}}
+    # Drop the transient _library_cite_keys carrier — it's a propose→verify
+    # plumbing field, not part of the ExperimentPlan schema.
+    cleaned = {k: v for k, v in plan.items() if k != "_library_cite_keys"}
+    return {"plan": {**cleaned, "validation_warnings": warnings}}
 
 
 def _finalize(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any]:

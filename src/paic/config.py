@@ -271,6 +271,17 @@ class OverleafConfig:
     prompt_on_delete: bool = True
 
 
+# White-list of nodes whose tool implementation actually returns the
+# ``mode: "host_orchestration"`` shape (markdown / schema_hint / next_tool).
+# Routing any other node to ``host`` causes ``HostOrchestrationRequired`` at
+# graph runtime — there's no client-side handler to catch it gracefully.
+# Doctor and ``RoutingConfig.invalid_host_overrides`` use this to surface the
+# misconfig at startup instead of mid-run.
+HOST_SUPPORTED_NODES: frozenset[str] = frozenset(
+    {"summarize", "draft_polish", "draft_compose"}
+)
+
+
 @dataclass(frozen=True)
 class RoutingConfig:
     """Per-node routing.
@@ -291,6 +302,19 @@ class RoutingConfig:
     default: str = "anthropic"
     overrides: dict[str, str] = field(default_factory=dict)
     fallback: str | None = None
+
+    def invalid_host_overrides(self) -> list[str]:
+        """Return node labels routed to ``host`` that aren't in the
+        ``HOST_SUPPORTED_NODES`` white-list.
+
+        These are configuration mistakes that crash the corresponding graph
+        node with ``HostOrchestrationRequired`` the first time it's invoked.
+        """
+        return sorted(
+            node
+            for node, backend in self.overrides.items()
+            if backend == "host" and node not in HOST_SUPPORTED_NODES
+        )
 
 
 # Reserved keys under ``providers:`` — not treated as named LLM profiles. The

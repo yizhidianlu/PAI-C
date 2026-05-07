@@ -8,16 +8,26 @@ PAI-C 通过 opt-in 接入上游 [`paper-search-mcp`](https://github.com/openags
 
 ## 适用场景
 
-| 研究领域 | 推荐平台 | preset |
-|---|---|---|
-| 计算机 / AI / NLP / CV / 统计 | arxiv, semantic_scholar, openalex, dblp | `cs_ml` |
-| 生物医学 / 临床 / 生命科学 | pubmed, biorxiv, medrxiv, europepmc, pmc | `biomed` |
-| 物理 / 数学 / 天文 | arxiv, semantic_scholar, openalex | `physics_math` |
-| 经济 / 金融 / 管理 / 社会学 | ssrn, openalex, semantic_scholar, crossref | `econ_social` |
-| 工程 / 电子 / 机械 / 材料 | arxiv, openalex, crossref, ieee | `engineering` |
-| 跨学科 / 综合 / 默认 | arxiv, semantic_scholar, openalex, crossref, doaj | `interdisciplinary` |
+| 研究领域 | preset | 平台清单 | 实际生效 |
+|---|---|---|---|
+| 计算机 / AI / NLP / CV / 统计 | `cs_ml` | arxiv, semantic_scholar, openalex, dblp, **acm** | 4 个（acm 需 `ACM_API_KEY`，未设置时自动跳过） |
+| 生物医学 / 临床 / 生命科学 | `biomed` | pubmed, biorxiv, medrxiv, europepmc, pmc, semantic_scholar, arxiv | 7 个（无 key 限制）|
+| 物理 / 数学 / 天文 | `physics_math` | arxiv, semantic_scholar, openalex | 3 个（无 key 限制）|
+| 经济 / 金融 / 管理 / 社会学 | `econ_social` | ssrn, openalex, semantic_scholar, crossref, arxiv | 5 个（无 key 限制）|
+| 工程 / 电子 / 机械 / 材料 | `engineering` | arxiv, openalex, crossref, **ieee**, **acm** | 3 个（ieee 需 `IEEE_API_KEY` / acm 需 `ACM_API_KEY`，无 key 时自动跳过） |
+| 跨学科 / 综合 / 默认 | `interdisciplinary` | arxiv, semantic_scholar, openalex, crossref, doaj | 5 个（无 key 限制）|
 
 `arxiv` 与 `semantic_scholar` 在所有 preset 里都自动加上（不重复）。其余平台都通过 paper-search-mcp 调用。
+
+**API key gated 平台**：`acm` / `ieee` / `unpaywall` 在缺少对应环境变量时由 `paic_search_strategy` 自动剔出列表并 emit warning（`<platform> skipped: <reason>`）；`/paic-search` SKILL 把 warning 一行一行打印给用户。要启用：
+
+```powershell
+[Environment]::SetEnvironmentVariable("IEEE_API_KEY", "<key>", "User")
+[Environment]::SetEnvironmentVariable("ACM_API_KEY", "<key>", "User")
+[Environment]::SetEnvironmentVariable("PAPER_SEARCH_MCP_UNPAYWALL_EMAIL", "you@example.com", "User")
+```
+
+跑 `uv run paic doctor` 应看到对应行从 `[WARN]` 变 `[OK]`。
 
 ## 安装与配置
 

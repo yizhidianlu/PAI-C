@@ -419,6 +419,31 @@ def _check_host_orchestration(cfg: Config) -> Check | None:
     )
 
 
+def _check_host_overrides_valid(cfg: Config) -> Check | None:
+    """Reject ``routing.overrides.<node>: host`` for nodes without a host
+    handler.
+
+    Skipped when no host overrides exist or all are valid — keeps the row
+    out of the report for the common case.
+    """
+    from paic.config import HOST_SUPPORTED_NODES
+
+    invalid = cfg.routing.invalid_host_overrides()
+    if not invalid:
+        return None
+    return Check(
+        "host overrides",
+        "err",
+        f"node(s) routed to host without a handler: {', '.join(invalid)} "
+        f"(supported: {', '.join(sorted(HOST_SUPPORTED_NODES))})",
+        fix=(
+            "Edit ~/.paic/config.yaml and route these nodes to a real backend "
+            "(anthropic / openai / a named profile). Routing them to 'host' "
+            "crashes the graph with HostOrchestrationRequired at runtime."
+        ),
+    )
+
+
 def _check_sdk_handshake(cfg: Config) -> Check:
     """Live ``claude_agent_sdk`` round-trip — only run when ``--probe`` is on.
 
@@ -478,6 +503,9 @@ def run_all(*, probe_sdk: bool = False) -> list[Check]:
     host_row = _check_host_orchestration(cfg)
     if host_row is not None:
         checks.append(host_row)
+    host_invalid_row = _check_host_overrides_valid(cfg)
+    if host_invalid_row is not None:
+        checks.append(host_invalid_row)
     images_row = _check_images_backend(cfg)
     if images_row is not None:
         checks.append(images_row)

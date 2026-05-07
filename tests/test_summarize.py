@@ -575,3 +575,30 @@ def test_phase3_persist_legacy_payload_still_works(doi_project):
     # New fields default to empty / None — not absent.
     assert structured["datasets"] == []
     assert structured["contribution_type"] is None
+
+
+def test_phase3_persist_rejects_unknown_extra_field(doi_project):
+    """summarize_persist must surface schema_validation_failed when callers
+    pass fields outside the schema, instead of silently dropping data.
+
+    Regression: pre-fix, an unknown field (typo, mismatched server version,
+    LLM hallucination) was pydantic-stripped without warning, leaving
+    quality-gate downstream checks unable to find evidence that should have
+    been there.
+    """
+    from paic.mcp_server.tools.summarize import summarize_persist
+    out = summarize_persist(
+        str(doi_project),
+        "37925884",
+        structured={
+            "problem": "P", "method": "M",
+            "key_results": [], "limitations": [], "techniques": [],
+            # Typo / unknown field — must error, not silently drop.
+            "datatsets": ["typo of datasets"],
+        },
+    )
+    assert out.get("error") == "schema_validation_failed", out
+    # The pydantic detail must mention the unknown key so the SKILL can
+    # render a useful error.
+    detail_blob = repr(out.get("detail"))
+    assert "datatsets" in detail_blob

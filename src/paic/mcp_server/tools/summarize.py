@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from paic.config import load_config
 from paic.latex.filler import _cite_key
@@ -34,7 +34,16 @@ from paic.workspace.store import load_yaml, save_yaml, write_text
 
 # Schema the LLM is asked to return — narrower than PaperSummary because the
 # caller already knows paper metadata. We compose the full summary client-side.
+#
+# ``extra='forbid'`` is deliberate: when a host-orchestrated summary contains
+# fields outside this schema (typo, mismatched server version, hallucinated
+# extra key), we want a loud schema_validation_failed instead of silently
+# dropping data. The pre-existing failure mode — server running stale code,
+# new schema fields invisibly stripped — left phase-3 / phase-10 quality_gate
+# checks 0-hit without any error surface.
 class _SummaryFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     problem: str
     method: str
     key_results: list[str] = Field(default_factory=list)
@@ -219,6 +228,17 @@ def summarize_run(
 
     resolved = _resolve_paper(paths, paper_id)
     if resolved is None:
+        # Surface what we tried and what's actually in the library so users
+        # can spot a slug typo (e.g. dashes-vs-underscores in DOI cite_keys).
+        library_keys: list[str] = []
+        try:
+            selected = load_yaml(paths.selected_yaml) or {}
+            if isinstance(selected, dict):
+                for record in (selected.get("papers") or [])[:50]:
+                    if isinstance(record, dict):
+                        library_keys.append(_cite_key(record))
+        except Exception:
+            pass
         return {
             "error": "paper_not_in_library",
             "hint": (
@@ -228,6 +248,8 @@ def summarize_run(
                 "record in .paic/library/selected.yaml."
             ),
             "paper_id": paper_id,
+            "tried_match_fields": ["arxiv_id", "doi", "s2_id", "external_ids.values()", "cite_key"],
+            "library_cite_keys": library_keys,
         }
     ref, cite_key = resolved
 
@@ -474,6 +496,17 @@ def summarize_persist(
 
     resolved = _resolve_paper(paths, paper_id)
     if resolved is None:
+        # Surface what we tried and what's actually in the library so users
+        # can spot a slug typo (e.g. dashes-vs-underscores in DOI cite_keys).
+        library_keys: list[str] = []
+        try:
+            selected = load_yaml(paths.selected_yaml) or {}
+            if isinstance(selected, dict):
+                for record in (selected.get("papers") or [])[:50]:
+                    if isinstance(record, dict):
+                        library_keys.append(_cite_key(record))
+        except Exception:
+            pass
         return {
             "error": "paper_not_in_library",
             "hint": (
@@ -483,6 +516,8 @@ def summarize_persist(
                 "record in .paic/library/selected.yaml."
             ),
             "paper_id": paper_id,
+            "tried_match_fields": ["arxiv_id", "doi", "s2_id", "external_ids.values()", "cite_key"],
+            "library_cite_keys": library_keys,
         }
     ref, cite_key = resolved
 

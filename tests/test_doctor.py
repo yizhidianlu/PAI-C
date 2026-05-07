@@ -178,3 +178,77 @@ def test_doctor_claude_cli_errors_when_agent_sdk_required(isolated_home, monkeyp
     cli_check = next(c for c in checks if c.name == "claude CLI on PATH")
     assert cli_check.severity == "err"
     assert has_errors(checks)
+
+
+def test_doctor_flags_invalid_host_overrides(isolated_home, monkeypatch):
+    """routing.overrides.<node>: host must be a node with a host handler;
+    otherwise doctor must surface an err so the user fixes it before
+    the graph crashes mid-run with HostOrchestrationRequired."""
+    import yaml
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    home = isolated_home / ".paic"
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {"anthropic": {"mode": "api_key"}},
+                "routing": {
+                    "default": "anthropic",
+                    "overrides": {
+                        # valid — has a host handler
+                        "summarize": "host",
+                        # invalid — review_persona_methodology has no host handler;
+                        # this is exactly the configuration that crashed graph
+                        # mid-run with HostOrchestrationRequired in the sim.
+                        "review_persona_methodology": "host",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    from paic.config import reset_config_cache
+    from paic.doctor import has_errors, run_all
+
+    reset_config_cache()
+    checks = run_all()
+    row = next((c for c in checks if c.name == "host overrides"), None)
+    assert row is not None, "expected a 'host overrides' row when invalid hosts present"
+    assert row.severity == "err"
+    assert "review_persona_methodology" in row.message
+    assert has_errors(checks)
+
+
+def test_doctor_quiet_when_host_overrides_all_valid(isolated_home, monkeypatch):
+    """When every routing.overrides.<node>: host targets a supported node,
+    the validator stays silent — only the existing 'host orchestration' info
+    row appears."""
+    import yaml
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    home = isolated_home / ".paic"
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {"anthropic": {"mode": "api_key"}},
+                "routing": {
+                    "default": "anthropic",
+                    "overrides": {
+                        "summarize": "host",
+                        "draft_polish": "host",
+                        "draft_compose": "host",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    from paic.config import reset_config_cache
+    from paic.doctor import run_all
+
+    reset_config_cache()
+    checks = run_all()
+    invalid_row = next((c for c in checks if c.name == "host overrides"), None)
+    assert invalid_row is None, "no 'host overrides' err row when all hosts valid"

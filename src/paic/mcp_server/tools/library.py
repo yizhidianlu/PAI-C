@@ -78,7 +78,28 @@ def library_add_tool(
 
     selected["papers"] = existing
     save_yaml(paths.selected_yaml, selected)
-    return {"added": added, "skipped_duplicates": skipped, "library_count": len(existing)}
+
+    # Surface the entries with no local PDF (typical for s2-only or DOI-only
+    # papers that don't have an auto-download path). The /paic-ingest SKILL
+    # prints these as "未下载: N 篇（仅元数据）" so users know which papers
+    # will fall back to abstract-only summarize.
+    papers_without_pdf = [
+        {
+            "title": r.get("title"),
+            "doi": r.get("doi"),
+            "arxiv_id": r.get("arxiv_id"),
+            "s2_id": r.get("s2_id"),
+            "source": r.get("source"),
+        }
+        for r in added
+        if not r.get("pdf_local_path")
+    ]
+    return {
+        "added": added,
+        "skipped_duplicates": skipped,
+        "library_count": len(existing),
+        "papers_without_pdf": papers_without_pdf,
+    }
 
 
 # --- helpers ---------------------------------------------------------------
