@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from paic.config import load_config
 from paic.latex.filler import _cite_key
+from paic.library.chunker import chunk_index_build
 from paic.llm.backends import HostOrchestrationRequired
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
 from paic.llm.host import build_host_directive
@@ -29,7 +30,7 @@ from paic.llm.router import LLMRouter
 from paic.schemas.paper import PaperRef, PaperSummary
 from paic.sources.arxiv_bridge import read_local_markdown
 from paic.sources.pdf_extract import extract_pdf_text
-from paic.workspace.paths import resolve_project
+from paic.workspace.paths import ProjectPaths, resolve_project
 from paic.workspace.store import load_yaml, save_yaml, write_text
 
 
@@ -67,6 +68,44 @@ class _SummaryFields(BaseModel):
 
 
 MAX_PAPER_CHARS = 120_000  # ~30k tokens, well under the model context window
+
+
+def _maybe_chunk_paper(
+    paths: ProjectPaths, cite_key: str, body: str | None,
+) -> int:
+    """Build chunks for ``cite_key`` from ``body`` (or fall back to disk).
+
+    Best-effort post-summarize hook (P0 #1):
+
+    - When ``body`` is non-empty, chunk it directly and persist.
+    - When ``body`` is None (persist path: host orchestration discards
+      the markdown after sending the directive), probe ``library/pdfs/``
+      for a saved markdown and chunk that.
+    - Failures are swallowed (we never let chunking break summarize) and
+      the chunk count returned to the caller is informational only.
+
+    Returns the number of chunks written; 0 when no markdown was found
+    or on any internal error.
+    """
+    try:
+        if body and body.strip():
+            chunks = chunk_index_build(paths, cite_key, body)
+            return len(chunks)
+        # Fallback: try the canonical project-local archive path.
+        candidates = [
+            paths.pdfs_dir / f"{cite_key}.md",
+        ]
+        for path in candidates:
+            if path.is_file():
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                chunks = chunk_index_build(paths, cite_key, text)
+                return len(chunks)
+        return 0
+    except Exception:  # noqa: BLE001 — never block summarize on chunk failure
+        return 0
 
 
 def _resolve_paper(
@@ -447,6 +486,8 @@ def summarize_run(
     save_yaml(summary_yaml, summary.model_dump(mode="json"))
     write_text(summary_md, _render_summary_markdown(summary))
 
+    chunks_written = _maybe_chunk_paper(paths, cite_key, body)
+
     return {
         "paper_id": paper_id,
         "cite_key": cite_key,
@@ -454,6 +495,7 @@ def summarize_run(
         "summary_path": str(summary_md),
         "structured": summary.model_dump(mode="json"),
         "from_cache": False,
+        "chunks_written": chunks_written,
     }
 
 
@@ -562,6 +604,13 @@ def summarize_persist(
     save_yaml(summary_yaml, summary.model_dump(mode="json"))
     write_text(summary_md, _render_summary_markdown(summary))
 
+    # P0 #1 — chunk the paper if its markdown body is on disk. Host
+    # orchestration discards the markdown after the directive is sent,
+    # so we probe library/pdfs/<cite_key>.md instead. Best-effort: a
+    # missing body just yields chunks_written=0; arxiv-only papers can
+    # still be reindexed later via paic_library_reindex_chunks.
+    chunks_written = _maybe_chunk_paper(paths, cite_key, body=None)
+
     return {
         "mode": "host_orchestration",
         "paper_id": paper_id,
@@ -569,4 +618,5 @@ def summarize_persist(
         "summary_path": str(summary_md),
         "structured": summary.model_dump(mode="json"),
         "persisted": True,
+        "chunks_written": chunks_written,
     }

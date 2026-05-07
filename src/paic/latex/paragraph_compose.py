@@ -160,7 +160,20 @@ def _format_outline_prompt(
             cite_key = hit.get("cite_key", "?")
             title = hit.get("title", "")
             snippet = hit.get("snippet") or ""
+            chunks = hit.get("chunks") or []
             parts.append(f"  - [{cite_key}] {title} — {snippet[:120]}")
+            # P0 #1: surface the top chunk preview so the outliner picks
+            # cite_key_candidates whose content actually matches the
+            # paragraph role, not just whose title looks promising.
+            if chunks:
+                top = chunks[0]
+                preview = (top.get("text") or "").strip().replace("\n", " ")
+                section_path = top.get("section_path") or ""
+                if preview:
+                    label = f" ({section_path})" if section_path else ""
+                    parts.append(
+                        f"      excerpt{label}: {preview[:240]}"
+                    )
     else:
         parts.append("  (no retrieval hits)")
 
@@ -243,11 +256,29 @@ def write_paragraph(
             parts.append(f"  - [{cid}] ({c.get('type', '?')}): {c.get('text', '')}")
 
     parts.append("")
-    parts.append("Cite_key snippets (for grounding; pick the relevant ones):")
+    parts.append(
+        "Cite_key passages (for grounding — every \\cite{KEY} you write "
+        "must be supported by one of these passages, paraphrased inline):"
+    )
     hit_by_key = {h.get("cite_key"): h for h in retrieval_hits if isinstance(h, dict)}
     for key in spec.cite_key_candidates:
         h = hit_by_key.get(key)
-        if h:
+        if not h:
+            continue
+        chunks = h.get("chunks") or []
+        # P0 #1: surface up to 3 chunks per cited paper so the writer can
+        # paraphrase content rather than rely on the cite_key + title alone.
+        # Falls back to the legacy snippet for papers without a chunk index.
+        if chunks:
+            parts.append(f"  - [{key}]:")
+            for chunk in chunks[:3]:
+                text = (chunk.get("text") or "").strip().replace("\n", " ")
+                section_path = chunk.get("section_path") or ""
+                if not text:
+                    continue
+                label = f" ({section_path})" if section_path else ""
+                parts.append(f"      passage{label}: {text[:400]}")
+        else:
             snippet = h.get("snippet") or ""
             parts.append(f"  - [{key}]: {snippet[:200]}")
 

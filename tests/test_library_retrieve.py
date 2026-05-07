@@ -285,3 +285,124 @@ def test_tool_no_query_no_section_errors(project):
 def test_tool_unknown_project_errors(tmp_path):
     res = library_retrieve_tool(str(tmp_path / "nope"), query="x")
     assert res["error"] == "project_not_initialized"
+
+
+# ----------------------------------------------------- chunk-level grounding (P0 #1)
+
+
+def _seed_chunks(project_dir, cite_key: str, md_text: str):
+    """Build & persist a chunk index for ``cite_key`` from ``md_text``."""
+    from paic.library.chunker import chunk_index_build
+    chunk_index_build(resolve_project(str(project_dir)), cite_key, md_text)
+
+
+def test_retrieve_chunks_per_paper_attaches_top_passages(project):
+    """When chunks_per_paper > 0 and chunks exist, hits include the top
+    chunk passages for each paper — not just a snippet from selected.yaml."""
+    _add_papers(str(project), [
+        {"arxiv_id": "p1", "title": "Channel pruning for EEG decoding",
+         "abstract": "Subset selection of electrodes.", "authors": ["A"]},
+    ])
+    _seed_chunks(str(project), "arxiv_p1", (
+        "# Method\n\n"
+        "We rank EEG channels by Fisher discriminant scores. The top-k channels "
+        "are kept and the rest masked.\n\n"
+        "# Results\n\n"
+        "On BCI-IV-2a the pruned model retains 97% accuracy with 30% of channels.\n"
+    ))
+    retriever = LibraryRetriever.build(resolve_project(str(project)))
+    assert retriever.chunk_count > 0
+    hits = retriever.retrieve("Fisher channel ranking", k=5, chunks_per_paper=2)
+    assert hits
+    # The paper's chunks should be attached.
+    assert hits[0].chunks, "expected chunks attached to hit"
+    chunk_texts = " ".join(c.text for c in hits[0].chunks)
+    assert "Fisher" in chunk_texts
+
+
+def test_retrieve_default_no_chunks_attached(project):
+    """Default behavior unchanged — chunks_per_paper=0 keeps the empty list."""
+    _add_papers(str(project), [
+        {"arxiv_id": "p1", "title": "Channel pruning",
+         "abstract": "Some content.", "authors": ["A"]},
+    ])
+    _seed_chunks(str(project), "arxiv_p1", "# X\n\nFoo bar baz.\n")
+    retriever = LibraryRetriever.build(resolve_project(str(project)))
+    hits = retriever.retrieve("channel pruning", k=5)
+    assert hits
+    assert hits[0].chunks == []
+
+
+def test_retrieve_chunks_empty_when_no_chunk_index(project):
+    """Older projects without chunks/ — chunks_per_paper=N still returns
+    empty chunks per hit, retrieval doesn't crash."""
+    _add_papers(str(project), [
+        {"arxiv_id": "p1", "title": "Channel pruning",
+         "abstract": "Some content.", "authors": ["A"]},
+    ])
+    retriever = LibraryRetriever.build(resolve_project(str(project)))
+    hits = retriever.retrieve("channel pruning", k=5, chunks_per_paper=3)
+    assert hits
+    assert hits[0].chunks == []
+
+
+def test_retrieve_chunks_ranks_relevant_chunk_first(project):
+    """Within a paper, the chunk most relevant to the query should rank first."""
+    _add_papers(str(project), [
+        {"arxiv_id": "p1",
+         "title": "Fisher-score channel ranking for EEG decoding",
+         "abstract": "Channel ranking via Fisher discriminant scores.",
+         "authors": ["A"]},
+    ])
+    _seed_chunks(str(project), "arxiv_p1", (
+        "# Background\n\n"
+        "Generic background that mentions baselines and prior pruning approaches.\n\n"
+        "# Method\n\n"
+        "Our specific Fisher-score channel ranking algorithm operates per-trial.\n"
+    ))
+    retriever = LibraryRetriever.build(resolve_project(str(project)))
+    hits = retriever.retrieve("Fisher channel ranking", k=1, chunks_per_paper=2)
+    assert hits
+    assert hits[0].chunks
+    # The Method chunk (mentioning Fisher / channel / ranking) should rank above Background.
+    top = hits[0].chunks[0]
+    assert "Fisher" in top.text
+
+
+def test_chunk_count_aggregates_across_papers(project):
+    _add_papers(str(project), [
+        {"arxiv_id": "p1", "title": "A", "abstract": "x", "authors": ["A"]},
+        {"arxiv_id": "p2", "title": "B", "abstract": "y", "authors": ["B"]},
+    ])
+    _seed_chunks(str(project), "arxiv_p1", "# A\n\nfoo bar.\n")
+    _seed_chunks(str(project), "arxiv_p2", "# B\n\nbaz qux.\n")
+    retriever = LibraryRetriever.build(resolve_project(str(project)))
+    assert retriever.chunk_count == 2
+
+
+def test_reindex_chunks_tool_walks_library(project):
+    """The MCP wrapper builds chunk indices for every paper with a markdown body."""
+    from paic.mcp_server.tools.library import library_reindex_chunks_tool
+    paths = resolve_project(str(project))
+    _add_papers(str(project), [
+        {"arxiv_id": "p1", "title": "A", "abstract": "x", "authors": ["A"]},
+        {"arxiv_id": "p2", "title": "B", "abstract": "y", "authors": ["B"]},
+    ])
+    # Stage one markdown body in pdfs/.
+    paths.pdfs_dir.mkdir(parents=True, exist_ok=True)
+    (paths.pdfs_dir / "arxiv_p1.md").write_text(
+        "# Intro\n\nSome paper body content.\n", encoding="utf-8",
+    )
+    res = library_reindex_chunks_tool(str(project))
+    assert res.get("error") is None
+    assert res["library_count"] == 2
+    assert len(res["indexed"]) == 1
+    assert res["indexed"][0]["cite_key"] == "arxiv_p1"
+    assert any(s["cite_key"] == "arxiv_p2" and s["reason"] == "no_markdown_body"
+               for s in res["skipped"])
+
+
+def test_reindex_chunks_tool_empty_library_errors(project):
+    from paic.mcp_server.tools.library import library_reindex_chunks_tool
+    res = library_reindex_chunks_tool(str(project))
+    assert res["error"] == "library_empty"

@@ -136,6 +136,22 @@ needs_evidence ── reviewer 否决 ──────────────
 
 > Tip: `mmr_lambda=1.0` 是纯 BM25，`0.0` 是纯多样性；0.7 默认值在 50–200 篇 library 上是甜点。
 
+### Chunk-level grounding（v0.2）
+
+paragraph 模式 compose 不只看论文标题 / 摘要，而是注入**实际段落**作为 LLM 的可引依据：
+
+- `/paic-summarize` 之后会自动按 markdown heading 切分论文为 ~400 token 的 chunk，落在 `<project>/.paic/library/chunks/<cite_key>.json`。
+- compose 在 paragraph 模式调 retrieval 时附带 `chunks_per_paper=3`：每个候选论文返回 BM25 排序后的前 3 个 chunk。outline 阶段看到 chunk 摘要选 cite_key，write 阶段看到完整 chunk 内容、必须**为每个 `\cite{KEY}` 写一句来自该论文 chunk 的 inline supporting paraphrase**（`paragraph_write.md` system prompt 里硬性约束）。
+- 老项目（v0.1 之前没 chunks/）自动降级为 paper-level snippet —— 不阻断 compose，但 inline 引用的 grounding 较弱。建议运行一次 `paic_library_reindex_chunks` 一次性补齐：
+
+```text
+mcp__paic__paic_library_reindex_chunks(project_dir="<cwd>")
+```
+
+返回 `{library_count, indexed[], skipped[], total_chunks, chunks_dir}`。`skipped[]` 含未找到 markdown 的 cite_key，常见原因是 `library/pdfs/<cite_key>.md` 不存在 —— 通常表示该 paper 来自 arxiv MCP 而没用 `paic_library_attach_paper` 复制本地。
+
+claim semantic judge（`paic_claims_validate(semantic=true)`) 同步升级：当 cite_key 有 chunks 时，会先按 claim 文本 BM25 选 top-3 chunks 作为 paper context 喂给 judge，比 summary 全文更精准。`Claim.supporting_chunks` 字段（默认 `[]`）允许 claim 显式锚定到特定 chunk_ids，judge 优先用那些 chunk 而非 BM25 自选。
+
 ---
 
 ## 4. Paragraph mode compose

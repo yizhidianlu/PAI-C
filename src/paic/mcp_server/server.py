@@ -594,6 +594,40 @@ def paic_library_add(
 
 
 @mcp.tool()
+def paic_library_reindex_chunks(
+    project_dir: str,
+    target_tokens: int = 400,
+    overlap_tokens: int = 80,
+) -> dict[str, Any]:
+    """Re-chunk every library paper into ``library/chunks/<cite_key>.json`` (P0 #1).
+
+    Walks ``library/selected.yaml``; for each paper, locates the markdown
+    body at ``library/pdfs/<cite_key>.md`` (or ``pdf_local_path`` when
+    ingest used a human-readable filename), runs the heading-aware
+    chunker, and persists the per-paper index. Idempotent — re-running
+    produces the same indices.
+
+    Used by:
+    - One-shot migration for libraries from before P0 #1 (no chunks dir).
+    - Manual re-build when chunk granularity needs tuning (pass non-default
+      ``target_tokens`` / ``overlap_tokens``).
+
+    Compose's paragraph mode automatically reads from ``library/chunks/``
+    when present and falls back to one-line summaries when absent — this
+    tool is what populates that directory.
+
+    Returns ``{library_count, indexed, skipped, total_chunks, chunks_dir}``
+    where ``skipped`` is a list of ``{cite_key, reason}`` dicts so users
+    can see which papers lacked a usable markdown body.
+    """
+    return library_tools.library_reindex_chunks_tool(
+        project_dir,
+        target_tokens=target_tokens,
+        overlap_tokens=overlap_tokens,
+    )
+
+
+@mcp.tool()
 def paic_library_attach_paper(
     project_dir: str,
     paper: dict[str, Any],

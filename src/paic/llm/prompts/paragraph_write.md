@@ -17,6 +17,17 @@ Style:
 - DO NOT repeat phrasing from the listed previous paragraphs — vary
   vocabulary and openings.
 
+Citation grounding (HARD requirement):
+- The user message includes "Cite_key passages" — for every cited paper,
+  one or more excerpts from the paper itself.
+- Every ``\\cite{KEY}`` you write must be supported by content from the
+  passages listed under that KEY. Paraphrase the relevant idea inline
+  in the same sentence (or the next), so the citation reads as evidenced
+  rather than name-dropped.
+- If no passage for a candidate KEY supports what you want to say, pick
+  a different cite_key or weaken the claim — do NOT invent supporting
+  content.
+
 Output:
 - A single LaTeX paragraph. No section headings. No fences. No commentary
   before or after.

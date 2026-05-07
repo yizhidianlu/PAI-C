@@ -277,3 +277,146 @@ def test_compose_section_paragraph_handles_no_retrieval(project):
     )
     assert "error" not in out, out
     assert out["mode"] == "paragraph"
+
+
+# ----------------------------------------------------- chunk-level grounding (P0 #1)
+
+
+def test_paragraph_write_prompt_includes_chunk_passages():
+    """When retrieval_hits carry chunks, the write_paragraph user message
+    must include a "Cite_key passages" block with the chunk text.
+
+    Tests the prompt-formatter directly so the assertion is independent of
+    BM25 retrieval ordering (which is corpus-shape-dependent).
+    """
+    from paic.latex.paragraph_compose import write_paragraph
+    spec = ParagraphSpec(
+        id="P1", role="motivation",
+        intent="Motivate Fisher channel ranking.",
+        cite_key_candidates=["arxiv_lib2"],
+        target_words=120,
+    )
+    retrieval_hits = [
+        {
+            "cite_key": "arxiv_lib2",
+            "title": "Fisher channel ranking",
+            "snippet": "Fisher score channel ranking",
+            "match_reason": ["fisher", "channel"],
+            "chunks": [
+                {
+                    "chunk_id": "arxiv_lib2__c000",
+                    "section_path": "Method",
+                    "text": (
+                        "We apply Fisher discriminant score to rank EEG "
+                        "channels under cross-subject distribution shift."
+                    ),
+                },
+                {
+                    "chunk_id": "arxiv_lib2__c001",
+                    "section_path": "Background",
+                    "text": "Generic background about prior pruning approaches.",
+                },
+            ],
+        },
+    ]
+    captured: list[str] = []
+
+    class _CapturingLLM:
+        model = "stub"
+
+        def complete(self, *, system, user, max_tokens=2400, temperature=0.0, node=None):
+            captured.append(user)
+            return _ResponseStub("paragraph text")
+
+    write_paragraph(
+        spec=spec,
+        prev_paragraphs=[],
+        section="01_intro",
+        paper_plan=None,
+        idea=None,
+        retrieval_hits=retrieval_hits,
+        claims=[],
+        llm=_CapturingLLM(),
+    )
+    assert captured
+    user_msg = captured[0]
+    assert "Cite_key passages" in user_msg
+    # Each chunk's body and section_path should be reachable to the LLM.
+    assert "Fisher discriminant" in user_msg
+    assert "(Method)" in user_msg
+
+
+def test_paragraph_write_falls_back_to_snippet_when_no_chunks():
+    """Backward compatibility: papers without a chunk index (older projects)
+    still produce a usable write prompt — the snippet falls back into place.
+    """
+    from paic.latex.paragraph_compose import write_paragraph
+    spec = ParagraphSpec(
+        id="P1", role="motivation", intent="x",
+        cite_key_candidates=["arxiv_legacy"], target_words=100,
+    )
+    retrieval_hits = [
+        {
+            "cite_key": "arxiv_legacy",
+            "title": "Old paper",
+            "snippet": "Legacy snippet text from selected.yaml",
+            "match_reason": [],
+            # no chunks key (older retrieval response shape)
+        },
+    ]
+    captured: list[str] = []
+
+    class _CapturingLLM:
+        model = "stub"
+
+        def complete(self, *, system, user, max_tokens=2400, temperature=0.0, node=None):
+            captured.append(user)
+            return _ResponseStub("paragraph")
+
+    write_paragraph(
+        spec=spec, prev_paragraphs=[], section="01_intro",
+        paper_plan=None, idea=None,
+        retrieval_hits=retrieval_hits, claims=[], llm=_CapturingLLM(),
+    )
+    assert captured
+    assert "Legacy snippet text" in captured[0]
+
+
+def test_paragraph_outline_prompt_includes_chunk_excerpt():
+    """Outline prompt should surface a chunk preview so the outliner picks
+    cite_keys whose actual content matches the section."""
+    from paic.latex.paragraph_compose import outline_section
+    retrieval_hits = [
+        {
+            "cite_key": "arxiv_p1",
+            "title": "Some Paper",
+            "snippet": "snippet",
+            "match_reason": [],
+            "chunks": [
+                {
+                    "chunk_id": "arxiv_p1__c000",
+                    "section_path": "Method",
+                    "text": "We rank EEG channels by Fisher discriminant scores.",
+                },
+            ],
+        },
+    ]
+    captured: list[str] = []
+
+    class _CapturingLLM:
+        model = "stub"
+
+        def complete_json(self, *, system, user, schema, max_tokens=2048, temperature=0.0, node=None):
+            captured.append(user)
+            return _OutlineFields(paragraphs=[])
+
+    outline_section(
+        section="01_intro",
+        paper_plan=None, idea=None, experiment=None,
+        retrieval_hits=retrieval_hits, claims=[], target_words=400,
+        llm=_CapturingLLM(),
+    )
+    assert captured
+    outline_msg = captured[0]
+    assert "excerpt" in outline_msg.lower()
+    assert "Fisher discriminant" in outline_msg

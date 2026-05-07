@@ -35,6 +35,7 @@ from typing import Any
 from rank_bm25 import BM25Okapi
 
 from paic.latex.filler import _cite_key
+from paic.library.chunker import Chunk, load_all_chunks
 from paic.workspace.paths import ProjectPaths
 from paic.workspace.store import load_yaml
 
@@ -67,6 +68,24 @@ def _tokenize(text: str) -> list[str]:
 
 
 @dataclass(frozen=True)
+class ChunkHit:
+    """One chunk-level hit attached to a paper's :class:`RetrievalHit`.
+
+    P0 #1 (chunk-level grounding): when the project has a chunk index
+    on disk (built by ``paic_summarize_run`` or
+    ``paic_library_reindex_chunks``), retrieve() can return the top-N
+    chunks for each paper hit so compose can surface actual passages
+    instead of just a one-line summary.
+    """
+
+    chunk_id: str
+    cite_key: str
+    score: float
+    text: str
+    section_path: str
+
+
+@dataclass(frozen=True)
 class RetrievalHit:
     cite_key: str
     score: float
@@ -81,6 +100,12 @@ class RetrievalHit:
     paper: dict[str, Any]
     """The full PaperRef dict from selected.yaml so callers can render
     title / authors / year without re-loading."""
+
+    chunks: list[ChunkHit] = field(default_factory=list)
+    """Top-N chunks (BM25-ranked against the same query) for this paper
+    when chunk-level grounding is enabled. Empty when the project has no
+    chunk index, when the paper has no chunks, or when the caller didn't
+    request chunks (``chunks_per_paper=0``)."""
 
 
 @dataclass
@@ -168,8 +193,14 @@ class LibraryRetriever:
     Construct via :meth:`build`. Use :meth:`retrieve` with a section query.
     """
 
-    def __init__(self, indexed: list[_IndexedPaper]) -> None:
+    def __init__(
+        self,
+        indexed: list[_IndexedPaper],
+        *,
+        chunks_by_key: dict[str, list[Chunk]] | None = None,
+    ) -> None:
         self._indexed = indexed
+        self._chunks_by_key: dict[str, list[Chunk]] = chunks_by_key or {}
         # rank_bm25 hits ZeroDivisionError on a corpus where every document
         # tokenizes to nothing (e.g. tiny placeholder titles in test fixtures).
         # Guard against it; retrieve() will then short-circuit to ``[]``.
@@ -181,6 +212,11 @@ class LibraryRetriever:
     @classmethod
     def build(cls, paths: ProjectPaths) -> "LibraryRetriever":
         """Build the BM25 index from ``selected.yaml`` + ``summaries/``.
+
+        Also loads any chunk indices under ``library/chunks/`` so chunk-level
+        retrieval is opt-in via ``retrieve(chunks_per_paper=K)``. When
+        chunks/ doesn't exist (older projects), chunk_per_paper falls back
+        to an empty list per hit — paper-level results still work.
 
         Returns a retriever with an empty index when the library is empty.
         """
@@ -195,7 +231,14 @@ class LibraryRetriever:
             indexed.append(_IndexedPaper(
                 cite_key=cite_key, paper=paper, text=text, tokens=tokens,
             ))
-        return cls(indexed)
+        chunks_by_key = load_all_chunks(paths)
+        return cls(indexed, chunks_by_key=chunks_by_key)
+
+    @property
+    def chunk_count(self) -> int:
+        """Total chunks loaded across all papers — for surfacing index health
+        (``paic_library_reindex_chunks`` reports it; tests assert it)."""
+        return sum(len(c) for c in self._chunks_by_key.values())
 
     def __len__(self) -> int:
         return len(self._indexed)
@@ -205,6 +248,8 @@ class LibraryRetriever:
         query: str,
         k: int = 12,
         mmr_lambda: float = 0.7,
+        *,
+        chunks_per_paper: int = 0,
     ) -> list[RetrievalHit]:
         """Return the top-``k`` hits for ``query``, MMR-reranked for diversity.
 
@@ -212,6 +257,11 @@ class LibraryRetriever:
         - ``1.0`` → pure BM25 (no diversity)
         - ``0.0`` → pure diversity (ignore relevance)
         - ``0.7`` (default) → relevance-leaning with mild deduplication
+
+        ``chunks_per_paper`` (P0 #1): when > 0 and a chunk index is on
+        disk, attaches that many top-BM25 chunks per paper to each
+        :class:`RetrievalHit`. Default 0 keeps the paper-level behavior
+        for callers that don't want chunk-level grounding.
         """
         if not self._indexed or not query.strip() or k <= 0 or self._bm25 is None:
             return []
@@ -245,14 +295,74 @@ class LibraryRetriever:
             paper_token_set = set(paper.tokens)
             matched = sorted(query_token_set & paper_token_set)
             snippet = self._snippet(paper.text, matched)
+            chunk_hits: list[ChunkHit] = []
+            if chunks_per_paper > 0:
+                chunk_hits = self._top_chunks_for(
+                    paper.cite_key, query_tokens, chunks_per_paper,
+                )
             hits.append(RetrievalHit(
                 cite_key=paper.cite_key,
                 score=score,
                 match_reason=matched,
                 snippet=snippet,
                 paper=paper.paper,
+                chunks=chunk_hits,
             ))
         return hits
+
+    # ------------------------------------------------------ chunk hits
+
+    def _top_chunks_for(
+        self, cite_key: str, query_tokens: list[str], k: int,
+    ) -> list[ChunkHit]:
+        """Rank a single paper's chunks against the query, return top-``k``.
+
+        Uses the same tokenizer as paper-level retrieval (consistent
+        stopword handling). Falls back to ``[]`` for papers without a
+        chunk index — caller decides whether to surface that as a
+        warning (compose) or stay silent (review).
+
+        Scoring: BM25 over the per-paper corpus *plus* a query-token
+        overlap count. Per-paper BM25 corpora are tiny (often 5-30
+        chunks) and BM25's IDF formula returns exactly 0 for tokens
+        present in half the chunks — which would silently drop
+        legitimately matching chunks. Sorting by ``(overlap_count,
+        bm25_score)`` keeps the BM25 signal as a tiebreaker while
+        ensuring chunks that contain query terms aren't filtered out.
+        """
+        chunks = self._chunks_by_key.get(cite_key, [])
+        if not chunks or k <= 0:
+            return []
+        token_lists = [_tokenize(c.text) for c in chunks]
+        if not any(token_lists):
+            return []
+        try:
+            bm25 = BM25Okapi(token_lists)
+            scores = bm25.get_scores(query_tokens)
+        except (ZeroDivisionError, ValueError):
+            scores = [0.0] * len(chunks)
+
+        query_set = set(query_tokens)
+        ranked: list[tuple[int, float, int]] = []
+        for i, _chunk in enumerate(chunks):
+            overlap = len(query_set & set(token_lists[i]))
+            if overlap == 0:
+                continue
+            ranked.append((i, float(scores[i]), overlap))
+        # Prefer chunks with more query-token coverage; BM25 score breaks ties.
+        ranked.sort(key=lambda r: (r[2], r[1]), reverse=True)
+
+        out: list[ChunkHit] = []
+        for i, score, _overlap in ranked[:k]:
+            chunk = chunks[i]
+            out.append(ChunkHit(
+                chunk_id=chunk.chunk_id,
+                cite_key=cite_key,
+                score=score,
+                text=chunk.text,
+                section_path=chunk.section_path,
+            ))
+        return out
 
     # ------------------------------------------------------ MMR
 

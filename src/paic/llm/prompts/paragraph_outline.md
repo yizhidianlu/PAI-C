@@ -32,7 +32,7 @@ Quality bar:
 - 3-6 paragraphs is typical for an 800-word section. Don't pad.
 - Each paragraph has a **distinct role**: don't have two "background" paragraphs back-to-back.
 - ``claim_ids`` lists ledger ids the paragraph advances. Empty list is OK for transition / summary paragraphs.
-- ``cite_key_candidates`` is a *menu* the writer can pick from; pick 2-5 per paragraph that match the role (e.g. "method" paragraph candidates are method-papers, "contrast" candidates are baselines).
+- ``cite_key_candidates`` is a *menu* the writer can pick from; pick 2-5 per paragraph that match the role (e.g. "method" paragraph candidates are method-papers, "contrast" candidates are baselines). When excerpts are listed under a cite_key, prefer cite_keys whose excerpts actually align with the paragraph intent — a paper whose excerpt mentions the same metric / dataset / method-family as the paragraph is a stronger candidate than one whose title merely sounds related.
 - ``target_words`` per paragraph should sum to ~``target_words`` total ± 15%.
 - Order matters — earlier paragraphs set up later ones. For ``02_related``, group by cluster (method-family / dataset / limitation). For ``04_experiments``, motivation → setup → main result → ablations → analysis.
 - All output in **English**.

@@ -429,6 +429,94 @@ def test_semantic_off_skips_judge_entirely(project, monkeypatch):
     assert llm.calls == []
 
 
+def test_semantic_judge_uses_chunks_when_available(project, monkeypatch):
+    """When ``library/chunks/<cite_key>.json`` exists, the semantic judge's
+    paper-context text comes from chunks (BM25-ranked vs claim text), not
+    the summary.md file. P0 #1 grounding upgrade.
+    """
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))
+    _seed_claim_with_cite(project, "arxiv_p1",
+                          claim_text="Our method beats CSP by 3.2% on BCI-IV-2a.")
+    # Summary deliberately misleading — if the judge uses summary, it'd have
+    # no CSP content. The chunk has the actual relevant passage.
+    _seed_summary(project, "arxiv_p1", "Generic boilerplate without specifics.")
+
+    from paic.library.chunker import chunk_index_build
+    paths = resolve_project(str(project))
+    chunk_index_build(paths, "arxiv_p1", (
+        "# Background\n\n"
+        "Generic background about EEG decoding.\n\n"
+        "# Results\n\n"
+        "Our method outperforms CSP by 3.2% balanced accuracy on BCI-IV-2a "
+        "across cross-subject settings.\n"
+    ))
+
+    captured_users: list[str] = []
+
+    class _CapturingJudgeLLM(_StubJudgeLLM):
+        def complete_json(self, *, system, user, schema, max_tokens=4096, temperature=0.0, node=None):
+            captured_users.append(user)
+            return super().complete_json(
+                system=system, user=user, schema=schema,
+                max_tokens=max_tokens, temperature=temperature, node=node,
+            )
+
+    llm = _CapturingJudgeLLM(verdict="supports", rationale="Direct match.")
+    res = claims_validate_tool(str(project), semantic=True, llm=llm)
+    assert res["semantic"] is True
+    # Judge was called with the chunk content (not the summary boilerplate).
+    assert captured_users
+    msg = captured_users[0]
+    assert "outperforms CSP" in msg or "3.2% balanced accuracy" in msg
+    assert "Generic boilerplate" not in msg
+
+
+def test_semantic_judge_chunk_priority_respects_supporting_chunks(project, monkeypatch):
+    """When ``Claim.supporting_chunks`` lists specific chunk_ids, the judge
+    sees exactly those passages — even if BM25 over the chunk corpus would
+    have ranked others higher."""
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))
+    _seed_summary(project, "arxiv_p1", "Summary fallback text.")
+    from paic.library.chunker import chunk_index_build
+    paths = resolve_project(str(project))
+    chunk_index_build(paths, "arxiv_p1", (
+        "# Section A\n\nHigh-relevance phrase about CSP and accuracy gain.\n\n"
+        "# Section B\n\nUnrelated tangential content.\n"
+    ))
+    # Seed a claim that explicitly anchors itself to chunk B (the unrelated one).
+    now = datetime.now(UTC)
+    ledger = ClaimsLedger(claims=[
+        Claim(
+            id="CL1",
+            text="Our method beats CSP by 3.2% on BCI-IV-2a.",
+            type="comparative",
+            status="needs_evidence",
+            required_citations=["arxiv_p1"],
+            supporting_chunks=["arxiv_p1__c001"],  # the tangential chunk
+            created_at=now, updated_at=now,
+        )
+    ])
+    save_ledger(paths, ledger)
+
+    captured_users: list[str] = []
+
+    class _CapturingJudgeLLM(_StubJudgeLLM):
+        def complete_json(self, *, system, user, schema, max_tokens=4096, temperature=0.0, node=None):
+            captured_users.append(user)
+            return super().complete_json(
+                system=system, user=user, schema=schema,
+                max_tokens=max_tokens, temperature=temperature, node=node,
+            )
+
+    llm = _CapturingJudgeLLM(verdict="unrelated", rationale="Tangential.")
+    claims_validate_tool(str(project), semantic=True, llm=llm)
+    assert captured_users
+    msg = captured_users[0]
+    assert "tangential content" in msg.lower()
+    # The unrelated chunk landing in the prompt is the whole point of
+    # supporting_chunks — proves it overrode the BM25 default.
+
+
 def test_semantic_judge_cache_avoids_second_call(project, monkeypatch):
     """Same (claim, cite, summary) on a re-run hits cache → judge not called twice."""
     monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))

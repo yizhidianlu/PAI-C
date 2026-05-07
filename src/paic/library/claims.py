@@ -192,6 +192,67 @@ def _summary_text_for(paths: ProjectPaths, cite_key: str) -> str | None:
         return None
 
 
+def _paper_context_for(
+    paths: ProjectPaths,
+    cite_key: str,
+    claim_text: str,
+    *,
+    explicit_chunk_ids: list[str] | None = None,
+    top_k: int = 3,
+) -> str | None:
+    """Build the paper-context text fed to the claim judge (P0 #1).
+
+    Priority order:
+    1. ``explicit_chunk_ids`` — when the claim already records which chunks
+       it was extracted against, use those exactly. Skips chunks not on disk.
+    2. BM25 over the paper's chunks against ``claim_text`` — pick the top-K
+       most relevant passages. Tighter than dumping a whole summary.
+    3. Fall back to ``library/summaries/<cite_key>.md`` (legacy path).
+
+    Returns None when none of those yield text — caller silently skips
+    judging that cite_key.
+    """
+    from paic.library.chunker import load_chunk_index
+    from paic.library.retrieval import _tokenize  # local import — avoid cycle at module load
+
+    chunks = load_chunk_index(paths, cite_key)
+    if chunks:
+        if explicit_chunk_ids:
+            wanted = {cid for cid in explicit_chunk_ids if cid}
+            picked = [c for c in chunks if c.chunk_id in wanted]
+            if picked:
+                return "\n\n".join(c.text for c in picked)
+        # Rank-and-pick by query-token overlap (BM25 as tiebreaker).
+        # Per-paper corpora are tiny (often 5-30 chunks); BM25 IDF
+        # collapses to 0 when half the chunks share a token, which
+        # would silently drop matching chunks. Token overlap stays
+        # meaningful at any corpus size.
+        try:
+            from rank_bm25 import BM25Okapi
+            token_lists = [_tokenize(c.text) for c in chunks]
+            if any(token_lists):
+                claim_tokens = set(_tokenize(claim_text))
+                try:
+                    bm25 = BM25Okapi(token_lists)
+                    bm25_scores = bm25.get_scores(list(claim_tokens))
+                except (ZeroDivisionError, ValueError):
+                    bm25_scores = [0.0] * len(chunks)
+                ranked: list[tuple[int, int, float]] = []
+                for i, _chunk in enumerate(chunks):
+                    overlap = len(claim_tokens & set(token_lists[i]))
+                    if overlap == 0:
+                        continue
+                    ranked.append((i, overlap, float(bm25_scores[i])))
+                ranked.sort(key=lambda r: (r[1], r[2]), reverse=True)
+                picked = [chunks[i] for i, _, _ in ranked[:top_k]]
+                if picked:
+                    return "\n\n".join(c.text for c in picked)
+        except Exception:  # noqa: BLE001 — never block validate on chunk-rank failure
+            pass
+
+    return _summary_text_for(paths, cite_key)
+
+
 def _judge_cache_dir() -> Path:
     """Per-user cache for judge results — keyed by ``sha(claim || cite || summary)``.
 
@@ -378,18 +439,31 @@ def validate_ledger(
         )
 
         if semantic and llm is not None:
-            # For every cite_key the claim relies on AND that we have a
-            # summary for, ask the judge whether the cited paper supports
-            # this claim. Cite_keys without a summary are silently skipped
-            # (we can't judge what we can't read).
+            # For every cite_key the claim relies on, build a paper-context
+            # text (chunk-ranked when available, summary fallback) and ask
+            # the LLM judge whether that paper supports the claim. Cite_keys
+            # without any context are silently skipped (we can't judge what
+            # we can't read).
+            chunk_ids_for_paper: dict[str, list[str]] = {}
+            for chunk_id in claim.supporting_chunks:
+                # ``<cite_key>__c<NNN>`` — split on the first '__'.
+                if "__" not in chunk_id:
+                    continue
+                ck = chunk_id.split("__", 1)[0]
+                chunk_ids_for_paper.setdefault(ck, []).append(chunk_id)
             for cite_key in claim.required_citations:
                 if cite_key not in library_cite_keys:
                     continue  # already flagged as missing_cite above
-                summary = _summary_text_for(paths, cite_key)
-                if summary is None or not summary.strip():
+                paper_text = _paper_context_for(
+                    paths,
+                    cite_key,
+                    claim.text,
+                    explicit_chunk_ids=chunk_ids_for_paper.get(cite_key),
+                )
+                if paper_text is None or not paper_text.strip():
                     continue
                 verdict = judge_claim_against_summary(
-                    claim.text, summary, cite_key, llm=llm
+                    claim.text, paper_text, cite_key, llm=llm
                 )
                 if verdict.verdict == "unrelated":
                     issues.append(ValidationIssue(

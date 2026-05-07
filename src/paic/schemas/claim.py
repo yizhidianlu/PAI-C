@@ -73,6 +73,13 @@ class Claim(BaseModel):
     """Cite_keys the model thinks the claim *should* have — populated by
     extract; used by validate to flag missing cites."""
 
+    supporting_chunks: list[str] = Field(default_factory=list)
+    """Optional chunk_ids (``<cite_key>__c<NNN>``) the claim was extracted
+    against. P0 #1: when populated, the semantic claim judge reads those
+    specific passages instead of falling back to the paper's summary,
+    yielding tighter verdicts. Default ``[]`` for backward compatibility
+    — claims from before chunking shipped still validate via summary."""
+
     notes: str | None = None
     created_at: datetime
     updated_at: datetime

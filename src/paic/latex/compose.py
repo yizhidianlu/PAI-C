@@ -411,7 +411,12 @@ def compose_section(
                 experiment=experiment,
             )
             if query:
-                hits = retriever.retrieve(query, k=20)
+                # P0 #1: pull top-3 chunks per paper when a chunk index
+                # exists. compose paragraph mode injects them so the LLM
+                # sees actual paper content instead of a one-line summary.
+                # Falls back gracefully when chunks_per_paper hits empty
+                # chunk dirs (older projects pre-P0 #1).
+                hits = retriever.retrieve(query, k=20, chunks_per_paper=3)
                 retrieval_hits = [
                     {
                         "cite_key": h.cite_key,
@@ -419,6 +424,14 @@ def compose_section(
                         "snippet": h.snippet,
                         "title": h.paper.get("title"),
                         "match_reason": h.match_reason,
+                        "chunks": [
+                            {
+                                "chunk_id": c.chunk_id,
+                                "text": c.text,
+                                "section_path": c.section_path,
+                            }
+                            for c in h.chunks
+                        ],
                     }
                     for h in hits
                 ]
