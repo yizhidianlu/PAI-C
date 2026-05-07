@@ -37,12 +37,21 @@ allowed-tools: mcp__paic__paic_figure_plan, mcp__paic__paic_figure_generate, mcp
 
 ### Step 2 — 生成（每张图一次调用）
 
+> **每次 generate / edit / variant 都是一次真实 image-API 计费调用**——gpt-image-1 在 mytoken.top 等中转站约 ¥0.5-2 / 张，dall-e-3 直连约 $0.04-0.08。**不要**自动一次性把 plan 里所有 slot 都跑一遍。
+
 对每个 slot：
 
-1. Call `mcp__paic__paic_figure_generate(project_dir=<cwd>, slot=<slot_name>)`.
+1. **生成前一句中文成本预告**（首次 generate 时必须出现一次；同一 session 后续 slot 可省略，但若用户要 `variant n=4` 这种批量则必须重新预告）：
+   ```
+   即将调用 image API 生成 [<slot>]：~¥1（按 gpt-image-1 中转站价估算；实际看 ~/.paic/config.yaml 的 providers.images.model）。继续？
+   ```
+   等用户确认（"继续" / "y" / 回车）。如用户改主意可以让 plan_overwrite=True 重 plan。
+
+2. Call `mcp__paic__paic_figure_generate(project_dir=<cwd>, slot=<slot_name>)`.
    - 若返回 `error: images_disabled` → 提示用户在 `~/.paic/config.yaml` 里加 `providers.images` 块（enabled: true / model: gpt-image-1 / base_url: <relay> / api_key_env: <env>）然后**完全重启 Claude Code**。
    - 若返回 `error: image_backend_failed` → 把 `detail` 字段贴给用户（中转站具体错误），让用户决定换 model 还是换 base_url。
-2. 渲染响应（中文）：
+
+3. 渲染响应（中文）：
    ```
    [<slot>] 生成 v<n>
      文件: <png_path>
@@ -51,7 +60,8 @@ allowed-tools: mcp__paic__paic_figure_plan, mcp__paic__paic_figure_generate, mcp
    LaTeX 片段（粘贴到对应 section）：
    <latex_snippet>
    ```
-3. 询问用户：满意 / 想 edit / 想看几个 variant？
+
+4. 询问用户：满意 / 想 edit / 想看几个 variant？
 
 ### Step 3 — 改图
 
@@ -89,7 +99,7 @@ allowed-tools: mcp__paic__paic_figure_plan, mcp__paic__paic_figure_generate, mcp
 
 - 中文叙述。LaTeX 片段、文件路径、prompt 原文保留英文。
 - 把决定权留给用户——是否 edit / variant / 接受 / 重 plan，都问一句。
-- 生成成本不便宜（gpt-image-1 在 mytoken.top 之类的中转站约 ¥0.5-2/张），**别擅自一次性生成 N 张**；按需生成、按需 edit。
+- **首次 `generate` 前必须给一句中文成本预告**（见 Step 2 第 1 条）；批量 `variant n=>1` 也要预告。同 session 后续单图 generate 可省。**别擅自一次性把 plan 里所有 slot 都跑一遍**——按需生成、按需 edit。
 
 ## 已知陷阱
 

@@ -232,7 +232,11 @@ def mirror_drafts_to_overleaf(
     if not overleaf_cfg.enabled:
         return {
             "error": "overleaf_disabled",
-            "hint": "Set overleaf.enabled: true in ~/.paic/config.yaml + restart Claude Code.",
+            "hint": (
+                "Set overleaf.enabled: true in ~/.paic/config.yaml + restart "
+                "Claude Code. Full setup walkthrough: docs/overleaf-sync.md."
+            ),
+            "docs_url": "docs/overleaf-sync.md",
         }
 
     drafts = project_paths.drafts_dir
@@ -250,8 +254,11 @@ def mirror_drafts_to_overleaf(
             "looked_for": str(target.parent),
             "hint": (
                 "Open Overleaf → Account Settings → Linked Accounts → connect "
-                "Dropbox; ~/Dropbox/Apps/Overleaf/ is auto-created on first connect."
+                "Dropbox; ~/Dropbox/Apps/Overleaf/ is auto-created on first connect. "
+                "Full walkthrough (Dropbox-vs-git-bridge, conflict_strategy, ignore "
+                "patterns): docs/overleaf-sync.md."
             ),
+            "docs_url": "docs/overleaf-sync.md",
         }
 
     strategy: ConflictStrategy = conflict_strategy or overleaf_cfg.conflict_strategy

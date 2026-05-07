@@ -317,6 +317,48 @@ routing:
 
 `paic doctor` 会为每个命名 profile 输出一行 `profile: <name>`，显示 kind / model / mode / API key 是否就位。
 
+### 案例：用命名 profile 做 panel diversity（reviewer2 红队）
+
+PAI-C ideate 的 4-persona 评分（feasibility / novelty / impact / reviewer2）默认全走 `routing.default`——同一个 backend 同一个 model，4 个 persona 容易给出**高度相关**的分数（reviewer2 应有的"挑刺"角色被稀释）。
+
+实测有效的做法：把 `idea_score_reviewer2` 单独路由到一个**不同 model 系列**的命名 profile：
+
+```yaml
+providers:
+  openai:
+    mode: api
+    model: gpt-5.4-mini
+    api_key_env: OPENAI_API_KEY
+
+  openai_pro:                  # reviewer2 专用：换更大 model
+    kind: openai
+    mode: api
+    model: gpt-5.5            # 或换成 anthropic.api_key + claude-opus-4-7
+    api_key_env: OPENAI_API_KEY
+
+routing:
+  default: openai                                # 其他 3 个 persona 走 mini
+  overrides:
+    idea_score_reviewer2: openai_pro             # reviewer2 走 5.5
+```
+
+为什么有效：跨 model 系列的 prompt-following 偏差天然不同。模拟实测一次 ideate 的分布：
+
+| persona | feasibility | novelty | impact | avg | backend |
+|---|---|---|---|---|---|
+| methodology | 0.49 | 0.64 | 0.55 | 0.56 | gpt-5.4-mini |
+| novelty | 0.66 | 0.56 | 0.58 | 0.60 | gpt-5.4-mini |
+| impact | 0.56 | 0.81 | 0.57 | 0.65 | gpt-5.4-mini |
+| **reviewer2** | **0.39** | **0.35** | **0.36** | **0.37** | **gpt-5.5（隔离 backend）** |
+
+`panel_consensus` 字段给出 `"diverged"`，符合红队设计目的（其他 3 persona consensus 落 0.56-0.65 区间，reviewer2 系统性给低分）。如果 reviewer2 也走 `default`，4 个 persona 的 avg 通常落在 ±0.05 内——consensus 永远是 `"agreed"`，挑刺意图无效。
+
+类似策略对其他需要 diversity 的节点也适用：
+- `review_persona_reviewer2` — 同一道理，跨 model 系列拉开 critique
+- 不同 `review_persona_*`（methodology / statistics / domain）混用 mini + pro 拉开覆盖角度（成本依然可控）
+
+不要做：把 4 个 persona 全都 override 到同一个 `openai_pro` —— 这只是把"同 backend"的问题搬到更贵的 backend 上，diversity 没变化、成本翻倍。**只在挑刺型 persona 上隔离 backend** 性价比最高。
+
 ### Fallback 机制
 
 `fallback` 字段可选。若 `default` 抛 `LLMUnavailable`（典型场景：`claude_agent_sdk` 没登录或 token 失效），router 本次起切到 fallback、不中断 graph 流。
