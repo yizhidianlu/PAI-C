@@ -280,14 +280,43 @@ class OverleafConfig:
     prompt_on_delete: bool = True
 
 
-# White-list of nodes whose tool implementation actually returns the
-# ``mode: "host_orchestration"`` shape (markdown / schema_hint / next_tool).
-# Routing any other node to ``host`` causes ``HostOrchestrationRequired`` at
-# graph runtime — there's no client-side handler to catch it gracefully.
-# Doctor and ``RoutingConfig.invalid_host_overrides`` use this to surface the
-# misconfig at startup instead of mid-run.
+# White-list of nodes whose call site checks ``is_host_orchestrated`` and
+# returns a host directive instead of calling ``llm.complete*``. Routing
+# any other node to ``host`` causes ``HostOrchestrationRequired`` at first
+# use — there's no client-side handler to catch it gracefully. Doctor and
+# ``RoutingConfig.invalid_host_overrides`` use this to surface the misconfig
+# at startup instead of mid-run.
+#
+# Cloud-only nodes (NOT in this list, will crash if routed to host):
+# ``claim_judge`` / ``paragraph_outline`` / ``paragraph_write`` /
+# ``section_coherence_polish`` — high-frequency narrow tasks where host
+# round-trip overhead would dominate the actual LLM call.
 HOST_SUPPORTED_NODES: frozenset[str] = frozenset(
-    {"summarize", "draft_polish", "draft_compose"}
+    {
+        # Sync MCP-tool nodes — return directive directly from the tool call.
+        "summarize",
+        "paper_plan_generate",
+        "claim_extract",
+        "relwork_cluster",
+        "revision_extract",
+        "draft_polish",
+        "draft_compose",
+        "figure_plan",
+        "figure_prompt",
+        # In-graph nodes — pause via ``llm_or_interrupt`` and resume on ``*_step``.
+        "ideate_brainstorm",
+        "idea_score_methodology",
+        "idea_score_novelty",
+        "idea_score_impact",
+        "idea_score_reviewer2",
+        "experiment_design",
+        "review_persona_methodology",
+        "review_persona_statistics",
+        "review_persona_domain",
+        "review_persona_reviewer2",
+        "review_moderator",
+        "review_verdict",
+    }
 )
 
 

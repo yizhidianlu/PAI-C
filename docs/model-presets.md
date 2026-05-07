@@ -16,7 +16,9 @@
 
 ## 节点 workload 总览
 
-每个 LLM 调用站点都有节点标签，router 按 `routing.default + routing.overrides` 分发到具体 backend。Backend 命名规则与机制见 [configuration.md § 路由 routing](configuration.md#路由-routing)。
+> 节点用法 / host-aware 边界 / 路由命名规则见 [configuration.md § 节点路由表](configuration.md#节点路由表)；本表按 workload 维度（max_tokens / temperature / 调用频次 / 推理性质）细分，决定**配多大模型**。
+
+每个 LLM 调用站点都有节点标签，router 按 `routing.default + routing.overrides` 分发到具体 backend。
 
 | 节点 | 触发命令 | max_tokens | temp | 输入规模 | 推理性质 | 调用频次 |
 |---|---|---:|---:|---|---|---|

@@ -213,25 +213,32 @@ overleaf:
 #  Routing — 把节点分发到 backend
 # --------------------------------------------------------------------------
 #
-# 已知节点标签（**所有节点都支持 host**，详见 docs/host-orchestration.md）：
-#   summarize                                          论文摘要
+# 已知节点标签（25 个；21 个支持 host，4 个 cloud-only）。
+# 完整路由表 + workload 维度见 docs/configuration.md § 节点路由表。
+#
+# host-aware（21 个，可设 routing.overrides.<node>: host）：
+#   summarize                                          /paic-summarize
 #   paper_plan_generate                                /paic-paper-plan
-#   ideate_brainstorm                                  脑暴 N 个 idea
-#   idea_score_{methodology,novelty,impact,reviewer2}  ideate 4-persona panel
-#   experiment_design                                  实验方案
-#   review_persona_{methodology,statistics,domain,reviewer2}
-#   review_moderator / review_verdict                  review graph
-#   draft_polish / draft_compose                       LaTeX 写作
 #   claim_extract / relwork_cluster / revision_extract  library 流水线
+#   ideate_brainstorm                                  /paic-ideate 脑暴
+#   idea_score_{methodology,novelty,impact,reviewer2}  /paic-ideate 4-persona panel
+#   experiment_design                                  /paic-experiment
+#   review_persona_{methodology,statistics,domain,reviewer2}
+#   review_moderator / review_verdict                  /paic-review
+#   draft_polish / draft_compose                       /paic-draft (整稿层)
 #   figure_plan / figure_prompt                        /paic-figure
+#
+# cloud-only（4 个；高频窄任务，不支持 host —— 路由会触发 HostOrchestrationRequired）：
+#   claim_judge                                        三分类 (paic_claims_validate)
+#   paragraph_outline / paragraph_write / section_coherence_polish
+#                                                      /paic-draft compose 段级写作链
 #
 # Backend 名（routing.default / fallback / overrides 的值）：
 #   anthropic | openai                                 用 provider 配置的 mode
 #   anthropic.api_key | anthropic.claude_agent_sdk     强制 mode
 #   openai.api | openai.compatible
 #   <profile_name>[.<mode>]                            命名 profile（见 §providers）
-#   host                                               主对话（host）处理；任意节点都
-#                                                      可设置；详见 host-orchestration.md
+#   host                                               主对话处理；仅 host-aware 节点；
 #                                                      不能用作 fallback target。
 
 routing:

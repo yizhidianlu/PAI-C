@@ -198,10 +198,12 @@ def test_doctor_flags_invalid_host_overrides(isolated_home, monkeypatch):
                     "overrides": {
                         # valid — has a host handler
                         "summarize": "host",
-                        # invalid — review_persona_methodology has no host handler;
-                        # this is exactly the configuration that crashed graph
-                        # mid-run with HostOrchestrationRequired in the sim.
-                        "review_persona_methodology": "host",
+                        # invalid — claim_judge calls llm.complete_json directly
+                        # without an is_host_orchestrated branch (high-frequency
+                        # three-way classifier; host round-trip would dominate),
+                        # so routing it to host raises HostOrchestrationRequired
+                        # the first time the validator runs.
+                        "claim_judge": "host",
                     },
                 },
             }
@@ -216,7 +218,7 @@ def test_doctor_flags_invalid_host_overrides(isolated_home, monkeypatch):
     row = next((c for c in checks if c.name == "host overrides"), None)
     assert row is not None, "expected a 'host overrides' row when invalid hosts present"
     assert row.severity == "err"
-    assert "review_persona_methodology" in row.message
+    assert "claim_judge" in row.message
     assert has_errors(checks)
 
 

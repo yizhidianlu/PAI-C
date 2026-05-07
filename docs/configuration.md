@@ -7,7 +7,7 @@
 - [顶层字段](#顶层字段)
 - [arxiv 存储路径](#arxiv-存储路径) · [arxiv MCP 节流](#arxiv-mcp-节流)
 - [Provider](#provider) · [Anthropic 双路](#anthropic-双路) · [OpenAI 双路](#openai-双路) · [Semantic Scholar](#semantic-scholar)
-- [路由 routing](#路由-routing) · [节点路由表](#9-个节点标签) · [命名 provider profile](#命名-provider-profile同-provider-不同模型)
+- [路由 routing](#路由-routing) · [节点路由表](#节点路由表) · [命名 provider profile](#命名-provider-profile同-provider-不同模型)
 - [Host Orchestration（基础）](#host-orchestration)
 - [外部检索（多平台 paper-search-mcp）](#外部检索多平台-paper-search-mcp)
 - [ideate panel diversification（原理与检测）](#ideate-panel-diversification)
@@ -213,25 +213,41 @@ routing:
     review_persona_reviewer2: anthropic
 ```
 
-### 9 个节点标签
+### 节点路由表
 
-| 标签 | 站点 | 说明 |
-|---|---|---|
-| `summarize` | `paic_summarize_run` | 论文结构化摘要 |
-| `ideate_brainstorm` | ideate graph | 头脑风暴 N 个 idea |
-| `experiment_design` | experiment graph | 生成实验方案 |
-| `review_persona_methodology` | review graph | 方法论 reviewer |
-| `review_persona_statistics` | review graph | 统计 / 数据 reviewer |
-| `review_persona_domain` | review graph | 领域 reviewer |
-| `review_persona_reviewer2` | review graph | 创新性 / Reviewer-2 |
-| `review_moderator` | review graph | 综合 4 个 critique |
-| `review_verdict` | review graph | 终判 accept/reject |
-| `draft_polish` | `paic_draft_polish` | 段落 polish（v0.2）—— 可路由到 `host` 走主对话（host orchestration 见下文） |
-| `draft_compose` | `paic_draft_compose` | 全 section compose + 引用对齐（v0.3）—— 可路由到 `host` |
-| `idea_score_methodology` | ideate panel | feasibility 主审 persona —— 严苛工程师视角 |
-| `idea_score_novelty` | ideate panel | novelty 主审 persona —— 文献对照视角 |
-| `idea_score_impact` | ideate panel | impact 主审 persona —— 下游受众视角 |
-| `idea_score_reviewer2` | ideate panel | reviewer-2 红队 persona —— 强制 ≥2 red_flags / draft |
+PAI-C 共 **25 个 LLM 调用节点**（其中 21 个支持 host orchestration）。每个 `routing.overrides.<node>` 必须填下表中的 `节点` 列；按 workload 维度（max_tokens / temperature / 调用频次）选模型见 [model-presets.md](model-presets.md)。
+
+| 节点 | 触发命令 | 简述 | host-aware |
+|---|---|---|:---:|
+| `summarize` | `/paic-summarize` | 论文结构化摘要 | ✓ |
+| `paper_plan_generate` | `/paic-paper-plan` | 全局 paper plan 生成 | ✓ |
+| `claim_extract` | `paic_claims_extract` | 抽取论文主张 | ✓ |
+| `claim_judge` | `paic_claims_validate` | 三分类 supports/contradicts/neutral | — |
+| `relwork_cluster` | `paic_related_work_cluster` | 相关工作聚类 | ✓ |
+| `revision_extract` | `paic_revision_extract` | 审稿意见抽取 | ✓ |
+| `ideate_brainstorm` | `/paic-ideate` | 头脑风暴 N 个 idea | ✓ (in-graph) |
+| `idea_score_methodology` | `/paic-ideate` panel | 严苛工程师 persona | ✓ (in-graph) |
+| `idea_score_novelty` | `/paic-ideate` panel | 文献对照 persona | ✓ (in-graph) |
+| `idea_score_impact` | `/paic-ideate` panel | 下游受众 persona | ✓ (in-graph) |
+| `idea_score_reviewer2` | `/paic-ideate` panel | 红队 persona —— 强制 ≥2 red_flags | ✓ (in-graph) |
+| `experiment_design` | `/paic-experiment` | 实验方案设计 | ✓ (in-graph) |
+| `review_persona_methodology` | `/paic-review` | 方法论 reviewer | ✓ (in-graph) |
+| `review_persona_statistics` | `/paic-review` | 统计 / 数据 reviewer | ✓ (in-graph) |
+| `review_persona_domain` | `/paic-review` | 领域 reviewer | ✓ (in-graph) |
+| `review_persona_reviewer2` | `/paic-review` | 创新性 / Reviewer-2 | ✓ (in-graph) |
+| `review_moderator` | `/paic-review` | 综合 4 个 critique | ✓ (in-graph) |
+| `review_verdict` | `/paic-review` | 终判 accept/revise/reject | ✓ (in-graph) |
+| `paragraph_outline` | `/paic-draft compose` | 段落级 outline 生成 | — |
+| `paragraph_write` | `/paic-draft compose` | 单段 LaTeX 写作（高频） | — |
+| `section_coherence_polish` | `/paic-draft compose` | 节内连贯性润色 | — |
+| `draft_compose` | `/paic-draft compose` | 全 section 整稿合成 | ✓ |
+| `draft_polish` | `/paic-draft polish` | 段落 polish | ✓ |
+| `figure_plan` | `/paic-figure plan` | 配图规划（≤4 张） | ✓ |
+| `figure_prompt` | `/paic-figure generate` | image-gen prompt 写作 | ✓ |
+
+> **`host-aware`** 列含义：✓ 标记的节点支持 `routing.overrides.<node>: host`，调用时返回 host directive 让主对话生成结构化输出；— 标记的节点直接调云端 LLM，路由到 `host` 会触发 `HostOrchestrationRequired` 错误（高频窄任务，host round-trip 开销不划算）。`paic doctor` 启动时会校验 `routing.overrides` 是否合法，错配在跑流水线前就报。
+>
+> **`(in-graph)`** 标记的节点跑在 LangGraph 状态机内（review / ideate / experiment），host 化后通过 `interrupt(...)` 暂停 graph，调用方按 `*_step(host_response=...)` 推进。详见 [host-orchestration-internals.md](host-orchestration-internals.md)。
 
 ### 命名规则
 
@@ -332,7 +348,7 @@ routing:
 
 `host` 是一个特殊路由目标——PAI-C MCP 完全**不发**任何 LLM 调用，让 Claude Code 主对话生成结构化 JSON，PAI-C 只做 schema 校验 + 写盘。这是「订阅复用 + 零外部 LLM 调用」的最彻底退路。
 
-**支持节点**：全部 19 个 LLM 节点都已 host-aware，见上方 [节点路由表](#9-个节点标签) 「是否 host-aware」列。`host` 在 `routing.overrides` 与 `routing.default` 都可用，但**不要 `default: host`**——会让所有节点走主对话 round-trip，多轮 graph 体验大幅下降。
+**支持节点**：25 个 LLM 节点中 21 个支持 host orchestration（4 个高频窄任务节点 — `claim_judge` / `paragraph_outline` / `paragraph_write` / `section_coherence_polish` — 不支持，详见上方 [节点路由表](#节点路由表) 「host-aware」列）。`host` 在 `routing.overrides` 与 `routing.default` 都可用，但**不要 `default: host`**——会让所有节点走主对话 round-trip，多轮 graph 体验大幅下降。
 
 **最小配置**：
 
