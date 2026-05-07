@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 
 from paic import __version__
 from paic.mcp_server.tools import attach as attach_tools
+from paic.mcp_server.tools import claims as claims_tools
 from paic.mcp_server.tools import draft as draft_tools
 from paic.mcp_server.tools import experiment as experiment_tools
 from paic.mcp_server.tools import figure as figure_tools
@@ -284,6 +285,72 @@ def paic_library_retrieve(
         k=k,
         mmr_lambda=mmr_lambda,
     )
+
+
+# --- Claim ledger tools (§quality phase 4) ---------------------------------
+
+@mcp.tool()
+def paic_claims_init(project_dir: str) -> dict[str, Any]:
+    """Seed ``claims.yaml`` from the paper plan's contributions.
+
+    One Claim per ContributionEntry, type=``novelty``, status=``needs_evidence``.
+    Idempotent — re-running merges new contributions into an existing
+    ledger rather than overwriting it. Errors if no paper plan exists.
+    """
+    return claims_tools.claims_init_tool(project_dir)
+
+
+@mcp.tool()
+def paic_claims_extract(
+    project_dir: str,
+    section_name: str,
+    section_text: str,
+    contribution_id: str | None = None,
+) -> dict[str, Any]:
+    """Extract claim-shaped sentences from a composed section's LaTeX.
+
+    Calls an LLM to classify each assertion (novelty / comparative /
+    numeric / factual / methodological / result), captures inline
+    ``\\cite{}`` keys as ``required_citations``, and merges into
+    ``claims.yaml`` deduped by text. Returns the count of newly-extracted
+    claims plus a list of strong claims (novelty / comparative / numeric /
+    result) that came back ``status="needs_evidence"`` so the SKILL can
+    surface them as warnings.
+    """
+    return claims_tools.claims_extract_tool(
+        project_dir,
+        section_name,
+        section_text,
+        contribution_id=contribution_id,
+    )
+
+
+@mcp.tool()
+def paic_claims_validate(project_dir: str) -> dict[str, Any]:
+    """Cross-check the entire claim ledger against the project library and experiments.
+
+    Surfaces three kinds of issues:
+    - ``missing_cite`` — claim's ``required_citations`` references a
+      cite_key not in the project library.
+    - ``unknown_experiment`` — claim's ``supporting_experiments``
+      references an experiment_id whose yaml doesn't exist.
+    - ``unsupported_strong_claim`` — claim of type novelty / comparative /
+      numeric / result with status=``needs_evidence`` and no
+      supporting_papers / supporting_experiments / required_citations.
+
+    Returns ``{ok, claims_count, issues_count, issues, by_claim}``.
+    """
+    return claims_tools.claims_validate_tool(project_dir)
+
+
+@mcp.tool()
+def paic_claims_list(
+    project_dir: str,
+    status_filter: str | None = None,
+) -> dict[str, Any]:
+    """Read ``claims.yaml``. Optional ``status_filter`` (``supported`` /
+    ``needs_evidence`` / ``todo`` / ``rejected``) narrows the result."""
+    return claims_tools.claims_list_tool(project_dir, status_filter=status_filter)
 
 
 @mcp.tool()

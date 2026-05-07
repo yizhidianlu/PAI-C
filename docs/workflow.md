@@ -37,6 +37,7 @@
   - `mcp__paic__paic_s2_search`（Semantic Scholar；客户端 0.95 req/s 限速）
 - **去重**：DOI / arxiv_id 主键 + 标题 fuzzy（threshold 0.92）
 - **section-aware retrieval**（compose 阶段）：当 library > 40 篇时，`/paic-draft compose` 自动用 BM25 + MMR 按 section 检索 top-40 而非按 selected.yaml 顺序截断；query 由 paper_plan 的 thesis / 当前 section 的 intent / idea / experiment 自动拼装。直接调 `paic_library_retrieve` 也能拿到 ranked hits + match_reason。
+- **claim ledger**：每次 compose 跑完自动把段落里的 strong claim（novelty / comparative / numeric / result）抽出来落到 `.paic/plans/claims.yaml`。`/paic-draft compose` 输出末尾会列出 needs_evidence 的强声明。`paic_claims_validate` 跨 claim 检查 cite_key / experiment_id / 强声明无支持的问题。
 - **强制召回校验**（dedupe 之后、渲染表格之前）：Skill 从 topic + 选用的 query 变体里抽 2-4 个 `core_terms`（英文短语），调 `paic_search_recall_check` 把召回池按 title 命中数分四桶（`tier1_strict` / `tier1_loose` / `tier2_partial` / `tier3_others`）。最终表格分两段渲染——「强相关·标题命中核心词」和「其他召回」——避免长召回池里标题明确含核心词的论文被注意力筛掉。`tier1_min=5` 兜底：T1 不足时从 T2 按命中数降序补到下限。
 - **产出**：返回候选表（不落盘；`/paic-ingest` 才入库）
 - **耗时**：5–15 秒，取决于 query 复杂度

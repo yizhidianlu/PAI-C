@@ -434,6 +434,40 @@ def compose_section(
     original_hash = _hash(original)
     cite_keys_used = sorted(set(_extract_used_cite_keys(composed)))
 
+    # Phase 4 — extract claims from the composed text and merge into
+    # claims.yaml. Best-effort: failures are not fatal, just suppress the
+    # claim-related fields in the payload so the SKILL knows extraction
+    # didn't run.
+    new_claims_summary: list[dict[str, Any]] | None = None
+    try:
+        from paic.library.claims import (
+            extract_claims_from_section,
+            load_ledger,
+            merge_claims,
+            save_ledger,
+        )
+        from paic.schemas.claim import ClaimsLedger
+        new_claims = extract_claims_from_section(
+            composed, section_name, llm=llm,
+        )
+        if new_claims:
+            existing = load_ledger(paths)
+            merged = merge_claims(existing.claims, new_claims)
+            save_ledger(paths, ClaimsLedger(claims=merged))
+            new_claims_summary = [
+                {
+                    "id": c.id,
+                    "type": c.type,
+                    "status": c.status,
+                    "text": c.text,
+                }
+                for c in new_claims
+                if c.type in {"novelty", "comparative", "numeric", "result"}
+                and c.status == "needs_evidence"
+            ]
+    except Exception:  # noqa: BLE001 — claim extraction is non-blocking
+        new_claims_summary = None
+
     payload: dict[str, Any] = {
         "section": str(target),
         "section_name": section_name,
@@ -450,6 +484,7 @@ def compose_section(
         "library_size": library_size,
         "paper_plan_used": paper_plan is not None,
         "retrieval_used": retrieval_used,
+        "claims_needs_evidence_strong": new_claims_summary,
         "wrote": False,
         "backup_path": None,
     }
