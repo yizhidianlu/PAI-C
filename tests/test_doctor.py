@@ -254,3 +254,42 @@ def test_doctor_quiet_when_host_overrides_all_valid(isolated_home, monkeypatch):
     checks = run_all()
     invalid_row = next((c for c in checks if c.name == "host overrides"), None)
     assert invalid_row is None, "no 'host overrides' err row when all hosts valid"
+
+
+def test_doctor_panel_routing_diversity_handles_host_persona(isolated_home, monkeypatch):
+    """A persona routed to ``host`` must not crash the diversity check.
+
+    Regression: previously the check called ``router.for_node`` inside a
+    ``try/except LLMUnavailable`` that did not catch ``HostOrchestrationRequired``,
+    so any user with an ideate panel persona on host (a fully legitimate
+    subscription-mode setup) hit a traceback instead of a doctor row.
+    """
+    import yaml
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    home = isolated_home / ".paic"
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {"anthropic": {"mode": "api_key"}},
+                "routing": {
+                    "default": "anthropic",
+                    "overrides": {
+                        "idea_score_methodology": "host",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    from paic.config import reset_config_cache
+    from paic.doctor import run_all
+
+    reset_config_cache()
+    checks = run_all()  # must not raise HostOrchestrationRequired
+    panel_row = next((c for c in checks if c.name == "panel routing"), None)
+    assert panel_row is not None, "expected a 'panel routing' row"
+    assert panel_row.severity in {"ok", "warn"}, (
+        f"panel routing should never err on legitimate host config: {panel_row}"
+    )

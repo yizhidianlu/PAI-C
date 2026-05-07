@@ -365,8 +365,12 @@ def _check_panel_routing_diversity(cfg: Config) -> Check:
     router = LLMRouter(cfg)
     backends: list[str] = []
     for p in personas:
+        node = f"idea_score_{p}"
+        if router.is_host_orchestrated(node):
+            backends.append("host")
+            continue
         try:
-            backend = router.for_node(f"idea_score_{p}")
+            backend = router.for_node(node)
             backends.append(getattr(backend, "name", "unknown"))
         except LLMUnavailable:
             backends.append("unavailable")
