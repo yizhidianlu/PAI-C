@@ -25,6 +25,8 @@ PROJECT_LAYOUT: tuple[str, ...] = (
     "templates",
     "state",
     "logs",
+    "plans",
+    "revisions",
 )
 
 
@@ -106,6 +108,34 @@ class ProjectPaths:
         """Project-local LaTeX templates (§19). One directory per template,
         e.g. ``.paic/templates/iclr2026/{main.tex.j2, *.sty, ...}``."""
         return self.paic_dir / "templates"
+
+    @property
+    def plans_dir(self) -> Path:
+        """Paper-level plans (§quality): ``paper_plan.yaml`` / ``claims.yaml`` /
+        ``related_work_clusters.yaml`` live here."""
+        return self.paic_dir / "plans"
+
+    @property
+    def paper_plan_yaml(self) -> Path:
+        return self.plans_dir / "paper_plan.yaml"
+
+    @property
+    def claims_yaml(self) -> Path:
+        return self.plans_dir / "claims.yaml"
+
+    @property
+    def related_work_yaml(self) -> Path:
+        return self.plans_dir / "related_work_clusters.yaml"
+
+    @property
+    def revisions_dir(self) -> Path:
+        """Persistent RevisionTask queue (§quality phase 8). One yaml per task."""
+        return self.paic_dir / "revisions"
+
+    @property
+    def retrieval_cache_json(self) -> Path:
+        """BM25 index cache for the library (§quality phase 2)."""
+        return self.library_dir / "retrieval_cache.json"
 
     @property
     def state_dir(self) -> Path:

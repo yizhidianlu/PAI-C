@@ -1,7 +1,7 @@
 ---
 name: paic-draft
 description: LaTeX writing — v0.1 fills a venue template (built-in cvpr/neurips/ieee, or any project-local template under .paic/templates/); v0.2 polishes individual sections via LLM rewrite (tighten / clarify / formalize / expand / proofread); v0.3 composes full sections from idea + experiment + library with auto citation alignment. Optionally syncs the resulting drafts/ tree bidirectionally with an Overleaf-linked Dropbox folder. Use when the user says "起 LaTeX 骨架" / "draft the paper" / "改一下 intro" / "compose 一段 related work".
-allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_draft_sync_overleaf, mcp__paic__paic_workspace_status
+allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_draft_sync_overleaf, mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_status
 ---
 
 # /paic-draft — LaTeX writing
@@ -143,6 +143,7 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
 
 2. **Pre-flight check**:
    - 看 `paic_workspace_status` 的 `library_count`。如果是 0 且要 compose intro/related/experiments → 先建议 `/paic-search` + `/paic-ingest`，再来 compose。
+   - 调 `mcp__paic__paic_paper_plan_status(project_dir=<cwd>)`：若 `exists=false` 提示用户「**建议先 `/paic-paper-plan` 锁定全局论点 + section_plan + terminology**，可以避免 compose 出来的各 section 用词漂移 / contribution 列表不一致；但不强制」。用户说继续 compose 直接进 step 3。
    - 提醒用户：compose 会**覆盖**整个 section 文件（备份会留）。
 
 3. **Call**:
@@ -162,6 +163,7 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
 4. **On success**, render in Chinese:
    - 一行：「✓ compose 完成: drafts/sections/02_related.tex（mode=from_stub, section=related）」
    - **引用统计**：「使用了 N 个 cite (`arxiv_xxx`, `doi_yyy`, ...)（从 library 共 M 篇里挑选）」
+   - **paper_plan**：根据 `out["paper_plan_used"]` 报告「✓ 已注入 paper_plan 全局上下文」或「⚠ paper_plan 缺失 — compose 仅依赖 idea + experiment」
    - 备份位置
    - **diff 块**：把 `out["diff"]` 截断到前 30 行展示。
    - validation warnings（如有）。

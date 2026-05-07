@@ -126,6 +126,46 @@ def _build_library_context(paths: ProjectPaths) -> tuple[str, set[str]]:
     return ("\n".join(bullets) + overflow_note, cite_keys)
 
 
+def _format_paper_plan(plan: dict[str, Any], section_name: str) -> str:
+    """Render the plan as a prompt-ready block, focused on what's relevant
+    to ``section_name``. Returns empty string if plan has no useful content."""
+    lines: list[str] = []
+    if thesis := plan.get("thesis"):
+        lines.append(f"  - thesis: {thesis}")
+    if venue := plan.get("target_venue"):
+        lines.append(f"  - target_venue: {venue}")
+    if audience := plan.get("audience"):
+        lines.append(f"  - audience: {audience}")
+    if contributions := plan.get("contributions"):
+        lines.append("  - contributions:")
+        for c in contributions:
+            cid = c.get("id") if isinstance(c, dict) else None
+            title = c.get("title") if isinstance(c, dict) else None
+            desc = c.get("description") if isinstance(c, dict) else None
+            if cid and title:
+                lines.append(f"      [{cid}] {title}: {desc or ''}")
+    # Section-targeted slice: surface only the section_plan entry for this section
+    section_entries = plan.get("section_plan") or []
+    for entry in section_entries:
+        if isinstance(entry, dict) and entry.get("name") == section_name:
+            lines.append(f"  - this section's intent: {entry.get('intent', '')}")
+            supports = entry.get("supports_contributions") or []
+            if supports:
+                lines.append(f"  - this section supports contributions: {supports}")
+            break
+    if terminology := plan.get("terminology"):
+        if isinstance(terminology, dict) and terminology:
+            lines.append("  - terminology (use these exact phrases):")
+            for term, defn in terminology.items():
+                lines.append(f"      \"{term}\": {defn}")
+    if symbols := plan.get("symbols"):
+        if isinstance(symbols, dict) and symbols:
+            lines.append("  - symbols:")
+            for sym, meaning in symbols.items():
+                lines.append(f"      {sym}: {meaning}")
+    return "\n".join(lines)
+
+
 def _format_user_prompt(
     *,
     section_name: str,
@@ -136,6 +176,7 @@ def _format_user_prompt(
     idea: dict[str, Any] | None,
     experiment: dict[str, Any] | None,
     library_md: str,
+    paper_plan: dict[str, Any] | None = None,
 ) -> str:
     parts: list[str] = [f"Section: {section_name}", f"Mode: {mode}"]
     target = target_words or _DEFAULT_TARGET_WORDS.get(section_name)
@@ -143,6 +184,13 @@ def _format_user_prompt(
         parts.append(f"Target length: ~{target} words (soft target)")
     if instruction:
         parts.append(f"Additional instruction: {instruction.strip()}")
+
+    if paper_plan:
+        plan_md = _format_paper_plan(paper_plan, section_name)
+        if plan_md:
+            parts.append("")
+            parts.append("Paper Plan (the global thesis this section must serve):")
+            parts.append(plan_md)
 
     parts.append("")
     parts.append("Idea:")
@@ -244,6 +292,12 @@ def compose_section(
         if exp_path.is_file():
             experiment = load_yaml(exp_path)
 
+    paper_plan: dict[str, Any] | None = None
+    if paths.paper_plan_yaml.is_file():
+        loaded = load_yaml(paths.paper_plan_yaml)
+        if isinstance(loaded, dict):
+            paper_plan = loaded
+
     library_md, library_keys = _build_library_context(paths)
 
     # Abstract / conclusion typically have no cites — empty library is OK.
@@ -270,6 +324,7 @@ def compose_section(
         idea=idea,
         experiment=experiment,
         library_md=library_md,
+        paper_plan=paper_plan,
     )
 
     if llm is None:
@@ -333,6 +388,7 @@ def compose_section(
         "cite_keys_missing_from_library": [],
         "validation": report.to_dict(),
         "library_size": library_size,
+        "paper_plan_used": paper_plan is not None,
         "wrote": False,
         "backup_path": None,
     }

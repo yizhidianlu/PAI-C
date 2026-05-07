@@ -19,6 +19,7 @@ from paic.mcp_server.tools import figure as figure_tools
 from paic.mcp_server.tools import ideate as ideate_tools
 from paic.mcp_server.tools import library as library_tools
 from paic.mcp_server.tools import pacing as pacing_tools
+from paic.mcp_server.tools import paper_plan as paper_plan_tools
 from paic.mcp_server.tools import review as review_tools
 from paic.mcp_server.tools import runs as runs_tools
 from paic.mcp_server.tools import search_recall as search_recall_tools
@@ -170,6 +171,72 @@ def paic_search_recall_check(
         tier1_min=tier1_min,
         match_mode=match_mode,
     )
+
+
+# --- Paper plan tools (§quality phase 1) -----------------------------------
+
+@mcp.tool()
+def paic_paper_plan_create(
+    project_dir: str,
+    idea_id: str,
+    experiment_id: str,
+    target_venue: str | None = None,
+    audience: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Generate the global paper plan from an idea + experiment + library.
+
+    Produces ``<project>/.paic/plans/paper_plan.yaml`` — a singleton file that
+    captures the paper's central thesis, contributions, section intent,
+    terminology / symbols, and reserved figure / table / algorithm slots.
+    Downstream compose / claim / quality-gate stages ground their output
+    against this plan to keep the paper globally coherent.
+
+    Args:
+        project_dir: PAI-C project root.
+        idea_id: source ``IdeaCard`` (must already exist under ``ideas/``).
+        experiment_id: source ``ExperimentPlan``.
+        target_venue: optional venue hint (e.g. "NeurIPS 2026").
+        audience: optional one-phrase reader description.
+        dry_run: return the generated plan without writing to disk.
+
+    Errors out if a plan already exists; use ``paic_paper_plan_update`` to
+    revise an existing plan, or delete the file to regenerate from scratch.
+    """
+    return paper_plan_tools.paper_plan_create_tool(
+        project_dir,
+        idea_id,
+        experiment_id,
+        target_venue=target_venue,
+        audience=audience,
+        dry_run=dry_run,
+    )
+
+
+@mcp.tool()
+def paic_paper_plan_update(
+    project_dir: str,
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply a shallow merge ``patch`` onto the existing paper plan.
+
+    Top-level fields in ``patch`` overwrite existing ones. To replace a list
+    field (e.g. ``contributions``) pass the full new list. Returns the
+    updated plan plus ``changed_keys`` so callers can confirm exactly what
+    moved.
+    """
+    return paper_plan_tools.paper_plan_update_tool(project_dir, patch=patch)
+
+
+@mcp.tool()
+def paic_paper_plan_status(project_dir: str) -> dict[str, Any]:
+    """Read the paper plan if present; report ``exists=False`` otherwise.
+
+    Used by ``/paic-draft`` SKILL to detect whether to inject the plan into
+    compose context, and by ``/paic-paper-plan`` to show the current plan
+    before applying edits.
+    """
+    return paper_plan_tools.paper_plan_status_tool(project_dir)
 
 
 @mcp.tool()
