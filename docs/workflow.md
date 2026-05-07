@@ -314,3 +314,17 @@ PAI-C 自动从 `.paic/state/` 下的检查点续跑。
 ```
 
 Claude 自行按顺序串接 skill。
+
+---
+
+## 何时进入 Paper-quality 阶段？
+
+`/paic-paper-plan` / `/paic-finalize` 是写作 / 提交期工具，**不是**所有项目都该走。判据：
+
+| 你的状态 | 推荐路径 |
+|---|---|
+| 还在探索期，不确定核心论点 | 继续 `/paic-ideate` 多轮 + `/paic-experiment`；先别起 paper plan |
+| 已锁定 1-2 个核心 idea，要开始写第一版 | `/paic-paper-plan` 锁全局论点 + 章节意图，再 `/paic-draft fill` |
+| 草稿已成形，要做投稿前检查 | `/paic-finalize` 跑 8 类 paper-level 一致性 |
+
+详细 paper-quality 工具链（claim ledger / paragraph compose / cluster / revision queue）见 [paper-plan.md](paper-plan.md)；提交前检查见 [quality-gate.md](quality-gate.md)。
