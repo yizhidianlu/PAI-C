@@ -101,9 +101,15 @@ actionable_fix: "..."
 - 评审人接受的章节长度偏差
 - 某条 strong claim 的支持文献还在 review
 
+> ⚠ **Blocker 不可被 override**：`severity=blocker` 的 issue 无论 kind 是否在 `overrides` 列表里都会**保留**，并写到响应的 `overrides_rejected: [{kind, severity}]` 字段告诉你「这条 override 没生效」；`passed` 在有 blocker 幸存时永远是 `false`。这是 v0.2 的硬墙，避免「形式上 evidenced、实质未 grounded」的论文 silent 通过。
+
 > Warning: override 不持久化、不改 yaml 状态。下次 `/paic-finalize` 还会复现这条 issue（除非源数据改了）。要让 issue 真的消失，请改源数据：claim status / paper_plan / 删 TODO。
 
 建议把每次 override 的 reason 写进 `paper_plan.yaml.open_todos`，作为提交后 followup 的 trail。
+
+### `--strict` / `strict=true`
+
+提交前最后一遍 / CI 用，**忽略所有 overrides**，每条 issue 都计入 `passed` 判定。`/paic-finalize` SKILL 识别用户原话里「严格 / strict / 提交前最后一遍 / 用 strict 跑」等关键词时自动启用。CI 集成例：把 `paic_quality_gate_run(strict=True)` 作为 release pipeline 的 gate。
 
 ---
 

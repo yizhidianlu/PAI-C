@@ -173,12 +173,25 @@ def cite_keys_in_library(
 
 
 @dataclass(frozen=True)
+class PaperPlanDriftIssue:
+    """A single drift detected between composed text and paper_plan ground truth."""
+
+    kind: str  # "terminology_inconsistency" | "contribution_drift"
+    field: str  # term key (terminology check) or section name (contribution check)
+    detail: str
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind, "field": self.field, "detail": self.detail}
+
+
+@dataclass(frozen=True)
 class ComposedReport:
     cite_keys_in_library: bool
     cite_keys_missing: list[str]
     begin_end_balanced: bool
     brace_balanced: bool
     warnings: list[str] = field(default_factory=list)
+    paper_plan_drift: list[PaperPlanDriftIssue] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -186,6 +199,7 @@ class ComposedReport:
             self.cite_keys_in_library
             and self.begin_end_balanced
             and self.brace_balanced
+            and not self.paper_plan_drift
         )
 
     def to_dict(self) -> dict:
@@ -195,12 +209,121 @@ class ComposedReport:
             "begin_end_balanced": self.begin_end_balanced,
             "brace_balanced": self.brace_balanced,
             "warnings": list(self.warnings),
+            "paper_plan_drift": [d.to_dict() for d in self.paper_plan_drift],
             "ok": self.ok,
         }
 
 
-def validate_composed(composed: str, library_keys: set[str]) -> ComposedReport:
-    """Run §21 compose guards: cite-in-library + structure + length."""
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9-]+")
+_STOPWORDS: frozenset[str] = frozenset({
+    "the", "a", "an", "of", "for", "and", "or", "with", "in", "on",
+    "to", "from", "by", "via", "based", "using", "we", "our", "this",
+    "that", "is", "are", "be", "as", "at", "such", "when", "where",
+    "which", "while", "than", "then", "also", "more", "most", "less",
+    "have", "has", "had", "can", "may", "will", "their", "these", "those",
+})
+
+
+def _meaningful_tokens(text: str) -> set[str]:
+    """Lowercase content tokens (≥3 chars, not stopword)."""
+    return {
+        t for t in _TOKEN_RE.findall(text.lower())
+        if len(t) >= 3 and t not in _STOPWORDS
+    }
+
+
+def validate_against_paper_plan(
+    composed: str,
+    paper_plan: dict | None,
+    *,
+    section_name: str | None = None,
+) -> list[PaperPlanDriftIssue]:
+    """Detect drift between composed text and paper_plan ground truth.
+
+    Two checks:
+
+    1. **Terminology inconsistency** — for each term key in
+       ``paper_plan.terminology``, count distinct casings observed in the
+       composed text (case-insensitive search). > 1 distinct casing means
+       the section uses the same concept under multiple names; flag it.
+       Terms that don't appear at all are not flagged.
+    2. **Contribution drift** (intro / conclusion sections only) —
+       collect content tokens from each ``contributions[*].title`` and
+       require the composed text to contain ≥ 60% of them. Below threshold
+       means the section talks about something else entirely.
+
+    Returns an empty list when ``paper_plan`` is ``None`` or both checks pass.
+    """
+    issues: list[PaperPlanDriftIssue] = []
+    if not isinstance(paper_plan, dict):
+        return issues
+
+    # Check 1: terminology consistency.
+    terminology = paper_plan.get("terminology")
+    if isinstance(terminology, dict):
+        for term in sorted(terminology):
+            if not isinstance(term, str) or len(term.strip()) < 2:
+                continue
+            pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])", re.IGNORECASE)
+            observed = {m.group(0) for m in pattern.finditer(composed)}
+            if len(observed) > 1:
+                issues.append(PaperPlanDriftIssue(
+                    kind="terminology_inconsistency",
+                    field=term,
+                    detail=(
+                        f"Term '{term}' used in {len(observed)} distinct "
+                        f"casings: {sorted(observed)}. paper_plan.terminology "
+                        "expects a single canonical casing."
+                    ),
+                ))
+
+    # Check 2: contribution drift (intro / conclusion only — those are the
+    # sections that should reflect the full contribution list).
+    if section_name in {"01_intro", "06_conclusion"}:
+        contributions = paper_plan.get("contributions")
+        if isinstance(contributions, list) and contributions:
+            contrib_tokens: set[str] = set()
+            for c in contributions:
+                if not isinstance(c, dict):
+                    continue
+                title = c.get("title", "")
+                if isinstance(title, str):
+                    contrib_tokens |= _meaningful_tokens(title)
+            if contrib_tokens:
+                text_tokens = _meaningful_tokens(composed)
+                overlap = contrib_tokens & text_tokens
+                ratio = len(overlap) / len(contrib_tokens)
+                if ratio < 0.6:
+                    missing = sorted(contrib_tokens - text_tokens)[:8]
+                    issues.append(PaperPlanDriftIssue(
+                        kind="contribution_drift",
+                        field=section_name,
+                        detail=(
+                            f"Section '{section_name}' covers only "
+                            f"{int(ratio * 100)}% of contribution-title "
+                            f"tokens (expected ≥ 60%). Missing tokens: "
+                            f"{missing}"
+                        ),
+                    ))
+
+    return issues
+
+
+def validate_composed(
+    composed: str,
+    library_keys: set[str],
+    *,
+    paper_plan: dict | None = None,
+    section_name: str | None = None,
+) -> ComposedReport:
+    """Run §21 compose guards: cite-in-library + structure + length + paper_plan drift.
+
+    When ``paper_plan`` is provided (with optional ``section_name``), also
+    check terminology consistency and (for intro / conclusion) contribution
+    coverage. Drift issues are surfaced via ``paper_plan_drift`` and cause
+    ``ok`` to return False — compose pipeline rejects the write and returns
+    ``error: paper_plan_drift_detected``.
+    """
     valid, missing = cite_keys_in_library(composed, library_keys)
     warnings: list[str] = []
     if len(composed) < 200:
@@ -208,12 +331,16 @@ def validate_composed(composed: str, library_keys: set[str]) -> ComposedReport:
             f"composed length is suspiciously short ({len(composed)} chars) "
             "— LLM may have refused or produced a stub"
         )
+    drift = validate_against_paper_plan(
+        composed, paper_plan, section_name=section_name
+    )
     return ComposedReport(
         cite_keys_in_library=valid,
         cite_keys_missing=missing,
         begin_end_balanced=begin_end_balanced(composed),
         brace_balanced=brace_balanced(composed),
         warnings=warnings,
+        paper_plan_drift=drift,
     )
 
 

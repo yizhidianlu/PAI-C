@@ -13,8 +13,8 @@ PAI-C runs the STEM paper workflow inside Claude Code — search and ingest lite
 ## Features
 
 - **Search & ingest** — arXiv + Semantic Scholar by default, 20+ optional platforms via `paper-search-mcp`. Title/DOI/arXiv dedupe, project-local PDF archive, structured summaries.
-- **Ideate** — multi-round ideation grounded on the ingested library, scored by a 4-persona panel (methodology / novelty / impact / Reviewer-2) with score memoization across rounds.
-- **Experiment design + multi-agent review** — schema-validated experiment plans, then a 4-persona LangGraph review (methodology / statistics / domain / Reviewer-2) with moderator synthesis and final verdict.
+- **Ideate** — multi-round ideation grounded on the ingested library, scored by a 4-persona scoring panel (methodology / novelty / impact / Reviewer-2) with score memoization across rounds.
+- **Experiment design + 4-persona review** — schema-validated experiment plans, then a 4-persona LangGraph review (methodology / statistics / domain / Reviewer-2) with moderator synthesis and final verdict. Personas see prior-round panel summary + author rebuttal across rounds (cross-visibility minimum patch).
 - **LaTeX writing** — three-stage pipeline (`fill` / `polish` / `compose`) with built-in `cvpr` / `neurips` / `ieee` templates and per-project venue customization. Optional paragraph-mode compose (outline → write → polish) for long sections.
 - **Paper-quality preflight** — `/paic-paper-plan` locks the global thesis + contribution list + per-section intent; an automatic claim ledger tracks every strong assertion with cite / experiment provenance; `/paic-finalize` runs 8 paper-level checks before submission. See [`docs/paper-plan.md`](docs/paper-plan.md) and [`docs/quality-gate.md`](docs/quality-gate.md).
 - **Multi-backend routing** — 4 LLM backends (Anthropic API, Claude Agent SDK subscription, OpenAI, OpenAI-compatible relays). Each of ~20 LLM call sites is independently routable; `summarize` / `draft_polish` / `draft_compose` can run on the main Claude Code conversation via the `host` route.

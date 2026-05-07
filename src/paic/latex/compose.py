@@ -469,8 +469,41 @@ def compose_section(
         paragraph_count = 0
         spec_count = 0
 
-    report = validate_composed(composed, library_keys)
+    report = validate_composed(
+        composed,
+        library_keys,
+        paper_plan=paper_plan,
+        section_name=section_name,
+    )
     if not report.ok:
+        # Distinguish drift-only failures from structural failures so the
+        # SKILL can suggest paper_plan-aware remediation (re-compose with
+        # stricter instruction / update paper_plan / etc.) rather than
+        # the cite/brace fix path.
+        structural_ok = (
+            report.cite_keys_in_library
+            and report.begin_end_balanced
+            and report.brace_balanced
+        )
+        if structural_ok and report.paper_plan_drift:
+            return {
+                "error": "paper_plan_drift_detected",
+                "section": str(target),
+                "section_name": section_name,
+                "mode": mode,
+                "validation": report.to_dict(),
+                "drift_issues": [d.to_dict() for d in report.paper_plan_drift],
+                "library_size": library_size,
+                "composed_preview": composed[:1500],
+                "hint": (
+                    "The model's output diverged from paper_plan ground "
+                    "truth (terminology casing or contribution coverage). "
+                    "Re-compose with `instruction='Strictly follow "
+                    "paper_plan.contributions and terminology'`, update "
+                    "paper_plan, or accept the drift by editing paper_plan. "
+                    "Original file untouched."
+                ),
+            }
         return {
             "error": "latex_validation_failed",
             "section": str(target),

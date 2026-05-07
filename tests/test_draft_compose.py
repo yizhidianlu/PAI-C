@@ -274,6 +274,86 @@ def test_compose_rejects_unbalanced_begin_end(project, monkeypatch):
     assert out["validation"]["begin_end_balanced"] is False
 
 
+def test_compose_rejects_paper_plan_drift(project, monkeypatch):
+    """When a paper_plan exists and the LLM output is structurally OK but
+    drifts (terminology used in mixed casing), compose returns
+    paper_plan_drift_detected and does not write to disk.
+    """
+    # Seed a paper_plan with a strict terminology entry.
+    plan_yaml = {
+        "schema_version": 1,
+        "thesis": "Test thesis.",
+        "contributions": [
+            {"id": "C1", "title": "Latent diffusion approach", "description": "x"},
+        ],
+        "section_plan": [],
+        "terminology": {"GAN": "generative adversarial network"},
+        "symbols": {},
+        "figure_plan": [],
+        "table_plan": [],
+        "algorithm_plan": [],
+        "open_todos": [],
+        "idea_id": "idea_x",
+        "experiment_id": None,
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    save_yaml(Path(project) / ".paic/plans/paper_plan.yaml", plan_yaml)
+
+    # LLM output is structurally fine: cite is in library, balanced. Only flaw
+    # is the term "GAN" appears alongside lowercase "gan" — drift.
+    composed_with_drift = (
+        r"\section{Related Work}" "\n"
+        + "Prior work uses GAN for tabular generation. "
+        + "Some recent gan variants reduce mode collapse. "
+        + "We argue against vanilla gan for our setting. "
+        + r"\cite{arxiv_2401_12345}." + "\n"
+        + "Padding text content here. " * 30
+    )
+    _patch_default_client(monkeypatch, composed_with_drift)
+
+    out = draft_compose_tool(str(project), "02_related", mode="from_stub", idea_id="idea_x")
+    assert out["error"] == "paper_plan_drift_detected"
+    assert any(d["kind"] == "terminology_inconsistency" for d in out["drift_issues"])
+    # File on disk should NOT contain the drifted output (compose didn't write).
+    related = Path(project) / ".paic/drafts/sections/02_related.tex"
+    assert "Prior work uses GAN" not in related.read_text(encoding="utf-8")
+
+
+def test_compose_no_drift_when_terminology_consistent(project, monkeypatch):
+    """Same paper_plan + LLM output that respects the canonical casing → write succeeds."""
+    plan_yaml = {
+        "schema_version": 1,
+        "thesis": "Test thesis.",
+        "contributions": [],
+        "section_plan": [],
+        "terminology": {"GAN": "generative adversarial network"},
+        "symbols": {},
+        "figure_plan": [],
+        "table_plan": [],
+        "algorithm_plan": [],
+        "open_todos": [],
+        "idea_id": "idea_x",
+        "experiment_id": None,
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    save_yaml(Path(project) / ".paic/plans/paper_plan.yaml", plan_yaml)
+
+    composed_ok = (
+        r"\section{Related Work}" "\n"
+        + "Prior work uses GAN. We extend GAN-based methods. "
+        + r"\cite{arxiv_2401_12345}." + "\n"
+        + "Padding text content here. " * 30
+    )
+    _patch_default_client(monkeypatch, composed_ok)
+
+    out = draft_compose_tool(str(project), "02_related", mode="from_stub", idea_id="idea_x")
+    assert out.get("error") is None
+    related = Path(project) / ".paic/drafts/sections/02_related.tex"
+    assert "Prior work uses GAN" in related.read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------- error paths
 def test_compose_section_not_found(project, monkeypatch):
     _patch_default_client(monkeypatch, "stub")

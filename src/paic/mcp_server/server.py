@@ -457,6 +457,7 @@ def paic_quality_gate_run(
     project_dir: str,
     compile_check: bool = False,
     overrides: list[str] | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Run paper-level preflight before declaring a draft ready.
 
@@ -464,17 +465,24 @@ def paic_quality_gate_run(
     ``duplicate_paragraphs`` / ``contribution_consistency`` /
     ``section_length_balance`` / ``unsupported_claims`` /
     ``numeric_provenance`` / ``latex_compile_warnings`` (opt-in).
-    Returns ``{passed, issue_count, issues, overrides}``. ``passed=true``
-    means no major / blocker severity issues survived (info / minor are
-    informational).
+    Returns ``{passed, issue_count, issues, overrides, overrides_rejected,
+    strict}``. ``passed=true`` means no major / blocker severity issues
+    survived (info / minor are informational).
 
     Use ``overrides=["kind1", "kind2"]`` to silently drop a check the
     user has explicitly acknowledged (e.g. shipping with TODOs intact).
+    **Blocker-severity issues are never dropped** — attempted overrides
+    on blockers are echoed in ``overrides_rejected`` and ``passed`` stays
+    ``false`` until the underlying issue is fixed.
+
+    ``strict=True`` ignores ``overrides`` entirely — every issue counts.
+    Intended for CI / final pre-submission pass.
     """
     return quality_gate_tools.quality_gate_run_tool(
         project_dir,
         compile_check=compile_check,
         overrides=overrides,
+        strict=strict,
     )
 
 

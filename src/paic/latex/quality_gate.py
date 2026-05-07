@@ -67,6 +67,13 @@ class GateResult:
     passed: bool
     issues: list[GateIssue]
     overrides: list[str] = field(default_factory=list)
+    overrides_rejected: list[dict[str, str]] = field(default_factory=list)
+    """List of ``{kind, severity}`` entries the caller asked to override but
+    that PAI-C kept anyway because the issue was a ``blocker``. Surfaced so
+    the user can see their override didn't take effect — see ``run_quality_gate``."""
+    strict: bool = False
+    """Echoes the strict-mode flag. When True, ``overrides`` is ignored and
+    every issue counts toward ``passed``."""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -74,6 +81,8 @@ class GateResult:
             "issue_count": len(self.issues),
             "issues": [i.to_dict() for i in self.issues],
             "overrides": list(self.overrides),
+            "overrides_rejected": list(self.overrides_rejected),
+            "strict": self.strict,
         }
 
 
@@ -411,8 +420,20 @@ def run_quality_gate(
     *,
     compile_check: bool = False,
     overrides: list[str] | None = None,
+    strict: bool = False,
 ) -> GateResult:
-    """Run all eight checks and return a GateResult."""
+    """Run all eight checks and return a GateResult.
+
+    ``overrides`` is a list of issue ``kind`` values the caller wants to drop
+    from the output. PAI-C honors the request **only for issues whose
+    severity is below blocker**; ``blocker`` issues are kept regardless and
+    recorded in ``overrides_rejected`` so the caller can see their request
+    was refused. This guarantees ``passed=true`` never coexists with a live
+    blocker.
+
+    ``strict=True`` ignores ``overrides`` entirely — every issue counts
+    toward ``passed``. Intended for CI / pre-submission final pass.
+    """
     overrides = list(overrides or [])
     sections = _all_sections(paths)
     library_cite_keys = _library_cite_keys(paths)
@@ -433,7 +454,26 @@ def run_quality_gate(
     raw_issues.extend(check_numeric_provenance(paths, experiment_ids))
     raw_issues.extend(check_latex_compile_warnings(paths, enabled=compile_check))
 
-    # Drop any issue whose ``kind`` appears in overrides.
-    issues = [i for i in raw_issues if i.kind not in overrides]
+    # Apply override filter:
+    # - strict=True: keep every issue, ignore overrides
+    # - strict=False: drop issues whose kind is in overrides AND severity != blocker;
+    #   blockers stay and are recorded in overrides_rejected.
+    issues: list[GateIssue] = []
+    overrides_rejected: list[dict[str, str]] = []
+    for issue in raw_issues:
+        if strict or issue.kind not in overrides:
+            issues.append(issue)
+            continue
+        if issue.severity == "blocker":
+            issues.append(issue)
+            overrides_rejected.append({"kind": issue.kind, "severity": issue.severity})
+        # else: silently dropped per user override request.
+
     passed = not any(i.severity in {"major", "blocker"} for i in issues)
-    return GateResult(passed=passed, issues=issues, overrides=overrides)
+    return GateResult(
+        passed=passed,
+        issues=issues,
+        overrides=overrides,
+        overrides_rejected=overrides_rejected,
+        strict=strict,
+    )

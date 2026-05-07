@@ -245,3 +245,109 @@ def test_validate_composed_short_warns():
     """Composed sections under 200 chars get a length warning."""
     report = validate_composed("tiny", set())
     assert any("short" in w.lower() for w in report.warnings)
+
+
+# ---------------------------------------------------------- paper_plan drift
+def test_validate_against_paper_plan_no_plan_no_issues():
+    """No paper_plan → no drift checks run."""
+    from paic.latex.guard import validate_against_paper_plan
+
+    issues = validate_against_paper_plan("any text", None)
+    assert issues == []
+
+
+def test_terminology_inconsistency_flagged():
+    """Same term used in two distinct casings → issue."""
+    from paic.latex.guard import validate_against_paper_plan
+
+    plan = {"terminology": {"GAN": "generative adversarial network"}}
+    text = "We use GAN for synthesis. Then gan results follow." * 5
+    issues = validate_against_paper_plan(text, plan)
+    kinds = {i.kind for i in issues}
+    assert "terminology_inconsistency" in kinds
+    drift = next(i for i in issues if i.kind == "terminology_inconsistency")
+    assert drift.field == "GAN"
+
+
+def test_terminology_consistent_no_issue():
+    """Single canonical casing → no issue."""
+    from paic.latex.guard import validate_against_paper_plan
+
+    plan = {"terminology": {"GAN": "generative adversarial network"}}
+    text = "We use GAN for synthesis. Then GAN results follow." * 5
+    issues = validate_against_paper_plan(text, plan)
+    assert all(i.kind != "terminology_inconsistency" for i in issues)
+
+
+def test_terminology_absent_no_issue():
+    """Term not present at all → not flagged (different from inconsistent)."""
+    from paic.latex.guard import validate_against_paper_plan
+
+    plan = {"terminology": {"GAN": "generative adversarial network"}}
+    text = "Plain prose with no mention of the term." * 5
+    issues = validate_against_paper_plan(text, plan)
+    assert issues == []
+
+
+def test_contribution_drift_flagged_in_intro():
+    """Intro that doesn't mention contribution titles → drift issue."""
+    from paic.latex.guard import validate_against_paper_plan
+
+    plan = {
+        "contributions": [
+            {"id": "C1", "title": "Channel pruning algorithm", "description": ""},
+            {"id": "C2", "title": "Cross-subject benchmark dataset", "description": ""},
+        ]
+    }
+    # text talks about something else
+    text = "We discuss baselines and standard regularization techniques in deep learning." * 3
+    issues = validate_against_paper_plan(text, plan, section_name="01_intro")
+    assert any(i.kind == "contribution_drift" for i in issues)
+
+
+def test_contribution_drift_passes_when_intro_mentions_titles():
+    """Intro that uses ≥60% of contribution title tokens → no drift."""
+    from paic.latex.guard import validate_against_paper_plan
+
+    plan = {
+        "contributions": [
+            {"id": "C1", "title": "Channel pruning algorithm", "description": ""},
+            {"id": "C2", "title": "Cross-subject benchmark dataset", "description": ""},
+        ]
+    }
+    # Hits all 5 unique content tokens: channel, pruning, algorithm, cross-subject (one token), benchmark, dataset.
+    text = (
+        "Our channel pruning algorithm beats the baseline. "
+        "We introduce a cross-subject benchmark dataset for evaluation. "
+    ) * 3
+    issues = validate_against_paper_plan(text, plan, section_name="01_intro")
+    assert all(i.kind != "contribution_drift" for i in issues)
+
+
+def test_contribution_drift_skipped_outside_intro_conclusion():
+    """Method / experiments sections aren't expected to list contributions."""
+    from paic.latex.guard import validate_against_paper_plan
+
+    plan = {"contributions": [{"id": "C1", "title": "Foo bar baz", "description": ""}]}
+    text = "Method body without those words." * 3
+    # Section name not in {01_intro, 06_conclusion} → skipped.
+    issues = validate_against_paper_plan(text, plan, section_name="03_method")
+    assert all(i.kind != "contribution_drift" for i in issues)
+
+
+def test_validate_composed_drift_makes_report_not_ok():
+    """A drift issue alone is enough to make report.ok=False."""
+    library = {"arxiv_a"}
+    plan = {"terminology": {"GAN": "..."}}
+    # Long enough to skip the short-length warning, all other guards pass.
+    text = (
+        r"\cite{arxiv_a}. We use GAN. Later we use gan instead of GAN."
+        + " More content here." * 50
+    )
+    report = validate_composed(text, library, paper_plan=plan, section_name="03_method")
+    # Structural checks pass; only drift fails.
+    assert report.cite_keys_in_library is True
+    assert report.begin_end_balanced is True
+    assert report.brace_balanced is True
+    assert any(d.kind == "terminology_inconsistency" for d in report.paper_plan_drift)
+    assert report.ok is False

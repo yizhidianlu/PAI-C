@@ -315,6 +315,51 @@ def test_overrides_drop_kind(project):
     kinds = {i.kind for i in res.issues}
     assert "unresolved_todos" not in kinds
     assert res.overrides == ["unresolved_todos"]
+    assert res.overrides_rejected == []  # major-severity overrides take effect
+
+
+def test_overrides_cannot_drop_blocker(project):
+    """Blocker-severity issues stay regardless of overrides; rejection is surfaced."""
+    # An undefined cite is the canonical blocker (no library entry for `nonexistent`).
+    _write_section(project, "01_intro", "X. \\cite{nonexistent}")
+    paths = resolve_project(str(project))
+    res = run_quality_gate(paths, overrides=["undefined_cites_refs"])
+    kinds = {i.kind for i in res.issues}
+    # Blocker stays in the kept list…
+    assert "undefined_cites_refs" in kinds
+    # …and is reported as rejected.
+    assert any(
+        r["kind"] == "undefined_cites_refs" and r["severity"] == "blocker"
+        for r in res.overrides_rejected
+    )
+    # passed must stay False because a blocker survived.
+    assert res.passed is False
+
+
+def test_strict_mode_ignores_overrides(project):
+    """strict=True ignores overrides entirely — every issue counts toward passed."""
+    _write_section(project, "01_intro", "X. \\todo{fix me}")
+    paths = resolve_project(str(project))
+    res = run_quality_gate(paths, overrides=["unresolved_todos"], strict=True)
+    kinds = {i.kind for i in res.issues}
+    # The TODO survives despite the override.
+    assert "unresolved_todos" in kinds
+    assert res.strict is True
+    # passed=False because the major issue is still there.
+    assert res.passed is False
+
+
+def test_strict_mode_passes_clean_project(project):
+    """strict=True still passes a project with zero issues."""
+    library_add_tool(str(project), [
+        {"arxiv_id": "clean1", "title": "x", "authors": ["A"]},
+    ])
+    _write_section(project, "01_intro", "We propose X. \\cite{arxiv_clean1}.")
+    paths = resolve_project(str(project))
+    res = run_quality_gate(paths, strict=True)
+    assert res.passed is True
+    assert res.strict is True
+    assert res.overrides_rejected == []
 
 
 def test_tool_returns_serializable_payload(project):

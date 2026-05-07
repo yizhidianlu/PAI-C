@@ -68,7 +68,7 @@ class _StubReviewLLM:
             marker = "moderator"
         elif "final verdict" in system.lower() or "panel chair" in system.lower():
             marker = "verdict"
-        self.calls.append({"persona": marker, "schema": schema.__name__})
+        self.calls.append({"persona": marker, "schema": schema.__name__, "user": user})
 
         if schema is _PersonaCritiqueOutput:
             return _PersonaCritiqueOutput(
@@ -176,6 +176,58 @@ def test_review_advances_through_rounds_to_verdict(project_with_experiment):
     assert (review_dir / "verdict.yaml").is_file()
     assert (review_dir / "round_1.md").is_file()
     assert (review_dir / "round_2.md").is_file()
+
+
+def test_round1_persona_prompt_has_no_previous_round_context(project_with_experiment):
+    """Round 1 personas should NOT see PREVIOUS ROUND context (none exists)."""
+    p, exp_id = project_with_experiment
+    stub = _StubReviewLLM()
+    review_start(str(p), exp_id, rounds=2, llm=stub)
+    # Round 1 calls only — review_start pauses before round 2.
+    persona_calls = [c for c in stub.calls if c["persona"] in {"methodology", "statistics", "domain", "reviewer2"}]
+    assert len(persona_calls) == 4
+    for call in persona_calls:
+        assert "PREVIOUS ROUND" not in (call["user"] or ""), (
+            f"Round 1 {call['persona']} prompt unexpectedly contains PREVIOUS ROUND segment"
+        )
+
+
+def test_round2_persona_prompts_include_previous_round_context(project_with_experiment):
+    """Round 2 personas + moderator must see prior moderator summary + author rebuttal."""
+    p, exp_id = project_with_experiment
+    stub = _StubReviewLLM()
+    start = review_start(str(p), exp_id, rounds=2, llm=stub)
+    run_id = start["run_id"]
+    rebuttal_text = "Will add LongBench baseline; bumping seeds to 5."
+    review_step(str(p), run_id, rebuttal=rebuttal_text, llm=stub)
+
+    # Slice out only round 2 calls — they come AFTER the round 1 set
+    # (4 personas + 1 moderator = 5 entries before round 2).
+    round2_calls = stub.calls[5:]
+    persona_calls_r2 = [c for c in round2_calls if c["persona"] in {"methodology", "statistics", "domain", "reviewer2"}]
+    moderator_calls_r2 = [c for c in round2_calls if c["persona"] == "moderator"]
+
+    assert len(persona_calls_r2) == 4
+    assert len(moderator_calls_r2) == 1
+
+    # Each round-2 persona prompt must include both segments.
+    for call in persona_calls_r2:
+        msg = call["user"] or ""
+        assert "PREVIOUS ROUND PANEL SUMMARY" in msg, (
+            f"Round 2 {call['persona']} missing prior panel summary"
+        )
+        assert "PREVIOUS ROUND AUTHOR REBUTTAL" in msg, (
+            f"Round 2 {call['persona']} missing prior rebuttal"
+        )
+        assert rebuttal_text in msg, (
+            f"Round 2 {call['persona']} prompt does not contain the actual rebuttal text"
+        )
+
+    # The moderator in round 2 should also see prior context for continuity.
+    msg = moderator_calls_r2[0]["user"] or ""
+    assert "PREVIOUS ROUND PANEL SUMMARY" in msg, (
+        "Round 2 moderator missing prior panel summary"
+    )
 
 
 def test_review_skip_to_verdict(project_with_experiment):

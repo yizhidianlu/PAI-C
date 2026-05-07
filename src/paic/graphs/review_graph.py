@@ -218,6 +218,63 @@ def _format_round_history(state: ReviewState) -> str:
     return "\n".join(out)
 
 
+def _format_previous_round_context(state: ReviewState) -> str:
+    """For round ≥ 2, surface prior moderator summary + author rebuttal text
+    so personas (and the moderator) don't "forget" what was discussed last
+    round. Returns ``""`` on round 1 — no prior history exists.
+
+    This is the §quality "cross-round visibility" minimum patch: prompts
+    are short (panel summary + top issues + rebuttal), token cost is low,
+    and personas can now react to what the author actually argued instead
+    of seeing only the patched experiment yaml.
+    """
+    round_num = state.get("round", 1)
+    if round_num <= 1:
+        return ""
+
+    parts: list[str] = []
+
+    notes = state.get("moderator_notes") or []
+    if notes:
+        last_note = notes[-1]
+        panel_summary = (last_note.get("panel_summary") or "").strip()
+        if panel_summary:
+            parts.append(
+                "### PREVIOUS ROUND PANEL SUMMARY\n\n" + panel_summary
+            )
+        issues = last_note.get("issues") or []
+        if issues:
+            issue_lines = []
+            for it in issues[:8]:
+                issue_lines.append(
+                    f"- [{it.get('severity', '?')}|{it.get('category', '?')}] "
+                    f"{it.get('issue', '')}"
+                )
+            parts.append(
+                "### PREVIOUS ROUND TOP ISSUES\n\n" + "\n".join(issue_lines)
+            )
+
+    rebuttals = state.get("rebuttals") or []
+    if rebuttals:
+        last_reb = rebuttals[-1]
+        text = (last_reb.get("text") or "").strip()
+        if text:
+            parts.append(
+                "### PREVIOUS ROUND AUTHOR REBUTTAL\n\n" + text
+            )
+
+    if not parts:
+        return ""
+
+    intro = (
+        "Use the context below from the previous round to focus your critique:\n"
+        "- Address residual issues the author has not adequately answered.\n"
+        "- Avoid re-litigating points the author already conceded or fixed.\n"
+        "- If the rebuttal raises new methodological doubts, surface them.\n\n"
+    )
+    return intro + "\n\n".join(parts) + "\n\n"
+
+
 # --- Nodes ----------------------------------------------------------------
 
 def _retrieve_context(state: ReviewState, deps: ReviewDeps) -> dict[str, Any]:
@@ -267,7 +324,8 @@ def _persona_critic(state: ReviewState, deps: ReviewDeps) -> dict[str, Any]:
     current_round = history[-1]
 
     user_msg = (
-        _format_experiment(state["experiment"])
+        _format_previous_round_context(state)
+        + _format_experiment(state["experiment"])
         + "\n\n### RELATED PAPERS\n\n"
         + _format_related_papers(state.get("related_papers", []))
     )
@@ -300,7 +358,8 @@ def _moderator_synthesize(state: ReviewState, deps: ReviewDeps) -> dict[str, Any
                 f"=> suggestion: {c.get('suggestion')}"
             )
     user_msg = (
-        _format_experiment(state["experiment"])
+        _format_previous_round_context(state)
+        + _format_experiment(state["experiment"])
         + "\n\n### THIS ROUND'S CRITIQUES\n\n"
         + "\n".join(critiques_block)
     )

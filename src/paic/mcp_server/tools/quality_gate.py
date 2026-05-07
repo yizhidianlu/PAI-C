@@ -12,12 +12,20 @@ def quality_gate_run_tool(
     project_dir: str,
     compile_check: bool = False,
     overrides: list[str] | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Run all eight phase-10 checks and return a structured GateResult.
 
     ``overrides`` is a list of issue ``kind`` values to drop from the
     output — used after the user explicitly acknowledged a category
     (e.g. ``["unresolved_todos"]`` to ship a draft with TODOs intact).
+    ``blocker`` severity issues are **never** dropped; attempted overrides
+    on blockers are surfaced via ``overrides_rejected`` and ``passed`` stays
+    ``false`` until the underlying issue is fixed.
+
+    ``strict=True`` ignores ``overrides`` entirely — every issue counts.
+    Use for CI / pre-submission final pass.
+
     ``compile_check`` is a hook for future LaTeX compiler integration;
     phase 10 stubs it.
     """
@@ -28,5 +36,6 @@ def quality_gate_run_tool(
         paths,
         compile_check=compile_check,
         overrides=overrides,
+        strict=strict,
     )
     return result.to_dict()
