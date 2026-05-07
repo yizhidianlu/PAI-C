@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from paic.library.revisions import (
+    _ExtractFields,
+    _dump_text,
     extract_tasks_from_review,
     list_tasks,
     mark_in_progress,
@@ -12,6 +14,8 @@ from paic.library.revisions import (
     save_tasks,
 )
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
+from paic.llm.host import build_host_directive
+from paic.llm.router import LLMRouter
 from paic.workspace.paths import resolve_project
 
 
@@ -31,6 +35,56 @@ def revision_extract_tool(
     if not paths.paic_dir.exists():
         return {"error": "project_not_initialized", "project_dir": str(paths.root)}
 
+    if not isinstance(review_payload, dict) or not review_payload:
+        return {
+            "extracted_count": 0,
+            "round": round_num,
+            "tasks": [],
+            "paths": [],
+        }
+
+    from paic.config import load_config
+    cfg = load_config()
+    router = LLMRouter(cfg)
+    if router.is_host_orchestrated("revision_extract"):
+        parts: list[str] = []
+        if round_num is not None:
+            parts.append(f"### REVIEW ROUND: {round_num}")
+        moderator = review_payload.get("moderator") or review_payload.get("synthesis")
+        if moderator:
+            parts.append("### MODERATOR SYNTHESIS")
+            parts.append(_dump_text(moderator))
+        critiques = review_payload.get("critiques") or review_payload.get("personas")
+        if critiques:
+            parts.append("### PER-PERSONA CRITIQUES")
+            if isinstance(critiques, dict):
+                for persona, text in critiques.items():
+                    parts.append(f"--- {persona} ---")
+                    parts.append(_dump_text(text))
+            elif isinstance(critiques, list):
+                for entry in critiques:
+                    if isinstance(entry, dict):
+                        name = entry.get("persona") or entry.get("name") or "?"
+                        parts.append(f"--- {name} ---")
+                        parts.append(_dump_text(entry))
+                    else:
+                        parts.append(_dump_text(entry))
+        if not parts:
+            parts.append(_dump_text(review_payload))
+        return build_host_directive(
+            node="revision_extract",
+            instructions=(
+                "Convert the review critiques in `user_prompt` into "
+                "RevisionTasks matching `schema_hint`. Then call "
+                "mcp__paic__paic_revision_extract_persist with `extracted=<your JSON>` "
+                "and the same `round_num` from `metadata`."
+            ),
+            user_prompt="\n\n".join(parts),
+            schema_hint=_ExtractFields.model_json_schema(),
+            next_tool="mcp__paic__paic_revision_extract_persist",
+            metadata={"round_num": round_num},
+        ).to_dict()
+
     client = llm or get_default_client()
     try:
         tasks = extract_tasks_from_review(
@@ -39,6 +93,52 @@ def revision_extract_tool(
     except LLMUnavailable as exc:
         return {"error": "llm_unavailable", "detail": str(exc)}
 
+    paths_written = save_tasks(paths, tasks)
+    return {
+        "extracted_count": len(tasks),
+        "round": round_num,
+        "tasks": [t.model_dump(mode="json") for t in tasks],
+        "paths": paths_written,
+    }
+
+
+def revision_extract_persist_tool(
+    project_dir: str,
+    extracted: dict[str, Any],
+    round_num: int | None = None,
+) -> dict[str, Any]:
+    """Persist host-generated revision tasks (LLM-free)."""
+    from datetime import UTC, datetime
+    from ulid import ULID
+    from pydantic import ValidationError
+    from paic.schemas.revision import RevisionTask
+
+    paths = resolve_project(project_dir)
+    if not paths.paic_dir.exists():
+        return {"error": "project_not_initialized", "project_dir": str(paths.root)}
+
+    try:
+        fields = _ExtractFields.model_validate(extracted)
+    except ValidationError as exc:
+        return {"error": "schema_validation_failed", "detail": exc.errors()}
+
+    now = datetime.now(UTC)
+    tasks: list[RevisionTask] = []
+    for raw in fields.tasks:
+        tasks.append(RevisionTask(
+            id=str(ULID()),
+            severity=raw.severity,
+            status="open",
+            target_kind=raw.target_kind,
+            target_ref=raw.target_ref,
+            summary=raw.summary,
+            detail=raw.detail,
+            patch_hint=raw.patch_hint,
+            source_persona=raw.source_persona,
+            source_review_round=round_num,
+            created_at=now,
+            updated_at=now,
+        ))
     paths_written = save_tasks(paths, tasks)
     return {
         "extracted_count": len(tasks),

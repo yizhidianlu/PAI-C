@@ -73,6 +73,10 @@ class ExperimentState(TypedDict, total=False):
 class ExperimentDeps:
     llm: LLMClient
     paths: ProjectPaths
+    router: object | None = None
+    """LLMRouter instance (declared as ``object`` to avoid circular imports).
+    When set and ``experiment_design`` routes to ``host``, the LLM call is
+    replaced by a LangGraph ``interrupt(...)``."""
 
 
 # --- Nodes ----------------------------------------------------------------
@@ -163,13 +167,18 @@ def _propose_plan(state: ExperimentState, deps: ExperimentDeps) -> dict[str, Any
         kv = "\n".join(f"- {k}: {v}" for k, v in constraints.items())
         user_msg += f"\n### CONSTRAINTS\n{kv}\n"
 
-    fields = deps.llm.complete_json(
+    from paic.llm.host import llm_or_interrupt
+
+    fields = llm_or_interrupt(
+        deps,
+        node="experiment_design",
         system=load_prompt("experiment_design"),
         user=user_msg,
         schema=_DesignFields,
         max_tokens=4096,
         temperature=0.2,
-        node="experiment_design",
+        run_id=state.get("run_id"),
+        resume_tool="mcp__paic__paic_experiment_resume",
     )
     plan = fields.model_dump()
     plan["_library_cite_keys"] = cite_keys  # consumed by _verify_plan, dropped before persist

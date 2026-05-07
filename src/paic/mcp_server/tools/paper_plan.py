@@ -22,7 +22,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
+from paic.llm.host import build_host_directive
 from paic.llm.prompts import load_prompt
+from paic.llm.router import LLMRouter
 from paic.schemas.idea import IdeaCard
 from paic.schemas.paper_plan import (
     AlgorithmPlanItem,
@@ -167,6 +169,34 @@ def paper_plan_create_tool(
         user_msg += (f"\nIntended audience: {audience}"
                      if target_venue else f"\n\n### CONSTRAINTS\nIntended audience: {audience}")
 
+    # Host orchestration: if paper_plan_generate is routed to "host", return a
+    # directive instead of calling an LLM. The Skill produces the _PlanFields
+    # JSON in the main conversation and calls paic_paper_plan_persist.
+    from paic.config import load_config
+    cfg = load_config()
+    router = LLMRouter(cfg)
+    if router.is_host_orchestrated("paper_plan_generate"):
+        return build_host_directive(
+            node="paper_plan_generate",
+            instructions=(
+                "Generate the paper plan JSON matching `schema_hint` based on "
+                "`user_prompt` (idea + experiment + library context). Then call "
+                "mcp__paic__paic_paper_plan_persist with `fields=<your JSON>` "
+                "plus the original idea_id / experiment_id / target_venue / "
+                "audience values."
+            ),
+            user_prompt=user_msg,
+            schema_hint=_PlanFields.model_json_schema(),
+            next_tool="mcp__paic__paic_paper_plan_persist",
+            metadata={
+                "idea_id": idea_id,
+                "experiment_id": experiment_id,
+                "target_venue": target_venue,
+                "audience": audience,
+                "dry_run": dry_run,
+            },
+        ).to_dict()
+
     client = llm or get_default_client()
     try:
         fields = client.complete_json(
@@ -180,6 +210,28 @@ def paper_plan_create_tool(
     except LLMUnavailable as exc:
         return {"error": "llm_unavailable", "detail": str(exc)}
 
+    return _finalize_paper_plan(
+        paths,
+        fields,
+        idea_id=idea_id,
+        experiment_id=experiment_id,
+        target_venue=target_venue,
+        audience=audience,
+        dry_run=dry_run,
+    )
+
+
+def _finalize_paper_plan(
+    paths: ProjectPaths,
+    fields: _PlanFields,
+    *,
+    idea_id: str,
+    experiment_id: str | None,
+    target_venue: str | None,
+    audience: str | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Common tail shared between LLM and host-orchestration paths."""
     now = datetime.now(UTC)
     plan = PaperPlan(
         thesis=fields.thesis,
@@ -208,6 +260,47 @@ def paper_plan_create_tool(
         "path": str(paths.paper_plan_yaml),
         "written": not dry_run,
     }
+
+
+def paper_plan_persist_tool(
+    project_dir: str,
+    fields: dict[str, Any],
+    idea_id: str,
+    experiment_id: str | None = None,
+    target_venue: str | None = None,
+    audience: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Persist a host-generated paper plan (LLM-free).
+
+    Validates ``fields`` against ``_PlanFields``, then runs the same
+    finalization tail as ``paper_plan_create_tool``.
+    """
+    from pydantic import ValidationError
+
+    paths = resolve_project(project_dir)
+    if not paths.paic_dir.exists():
+        return {"error": "project_not_initialized", "project_dir": str(paths.root)}
+    if paths.paper_plan_yaml.exists() and not dry_run:
+        return {
+            "error": "paper_plan_already_exists",
+            "path": str(paths.paper_plan_yaml),
+        }
+
+    try:
+        validated = _PlanFields.model_validate(fields)
+    except ValidationError as exc:
+        return {"error": "schema_validation_failed", "detail": exc.errors()}
+
+    return _finalize_paper_plan(
+        paths,
+        validated,
+        idea_id=idea_id,
+        experiment_id=experiment_id,
+        target_venue=target_venue,
+        audience=audience,
+        dry_run=dry_run,
+    )
 
 
 def paper_plan_update_tool(

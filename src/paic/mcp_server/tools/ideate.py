@@ -7,6 +7,7 @@ from typing import Any
 from langgraph.types import Command
 from ulid import ULID
 
+from paic.config import load_config
 from paic.graphs.ideate_graph import (
     DEFAULT_MAX_ROUNDS,
     DEFAULT_PERSONAS,
@@ -14,6 +15,7 @@ from paic.graphs.ideate_graph import (
     build_ideate_graph,
 )
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
+from paic.llm.router import LLMRouter
 from paic.mcp_server import runs as runs_registry
 from paic.workspace.paths import resolve_project
 
@@ -23,7 +25,8 @@ def _make_deps(project_dir: str, llm: LLMClient | None) -> IdeateDeps:
     if not paths.paic_dir.exists():
         raise FileNotFoundError(f".paic/ does not exist at {paths.root}")
     client = llm or get_default_client()
-    return IdeateDeps(llm=client, paths=paths)
+    cfg = load_config()
+    return IdeateDeps(llm=client, paths=paths, router=LLMRouter(cfg))
 
 
 def _interpret_state(graph_state) -> dict[str, Any]:
@@ -44,6 +47,16 @@ def _interpret_state(graph_state) -> dict[str, Any]:
                     break
             if interrupt_payload:
                 break
+
+    awaiting: str | None = None
+    host_directive: dict[str, Any] | None = None
+    if interrupt_payload and isinstance(interrupt_payload, dict):
+        stage = interrupt_payload.get("stage")
+        if stage == "host_orchestration":
+            awaiting = "host_orchestration"
+            host_directive = interrupt_payload.get("directive")
+        elif stage:
+            awaiting = "user"
 
     # Build preview_ideas (kept for v1-compat callers) + drafts_with_scores
     # (new richer payload). Both are derived from the same source.
@@ -99,6 +112,8 @@ def _interpret_state(graph_state) -> dict[str, Any]:
         ],
         "finalized_ids": values.get("finalized_ids") or [],
         "interrupt_payload": interrupt_payload,
+        "awaiting": awaiting,
+        "host_directive": host_directive,
     }
 
 
@@ -165,6 +180,8 @@ def ideate_start(
         "drafts_with_scores": parsed["drafts_with_scores"],
         "history_summary": parsed["history_summary"],
         "interrupt_payload": parsed["interrupt_payload"],
+        "awaiting": parsed["awaiting"],
+        "host_directive": parsed["host_directive"],
         "finalized_ids": parsed["finalized_ids"],
     }
 
@@ -176,6 +193,7 @@ def ideate_step(
     keep: list[int] | None = None,
     feedback: str | None = None,
     n_more: int | None = None,
+    host_response: dict[str, Any] | None = None,
     *,
     llm: LLMClient | None = None,
 ) -> dict[str, Any]:
@@ -199,6 +217,49 @@ def ideate_step(
         return {"error": "run_not_found", "run_id": run_id}
     if record["kind"] != "ideate":
         return {"error": "wrong_kind", "expected": "ideate", "got": record["kind"]}
+
+    # Host orchestration resume path: the Skill is supplying the host LLM's
+    # output for a paused ``llm_or_interrupt`` call. Skip the action / keep
+    # parsing — those are user-decision fields, distinct from host responses.
+    if host_response is not None:
+        from pydantic import ValidationError as _VE
+
+        config = {"configurable": {"thread_id": record["thread_id"]}}
+        graph = build_ideate_graph(deps)
+        try:
+            graph.invoke(Command(resume=host_response), config=config)
+            snapshot = graph.get_state(config)
+        except _VE as exc:
+            paused = _interpret_state(graph.get_state(config))
+            return {
+                "run_id": run_id,
+                "error": "host_response_invalid",
+                "detail": exc.errors(),
+                "host_directive": paused.get("host_directive"),
+                "awaiting": paused.get("awaiting"),
+            }
+        except Exception as exc:
+            runs_registry.update(run_id, status="error", error=repr(exc))
+            return {"run_id": run_id, "error": "graph_failed", "detail": repr(exc)}
+
+        parsed = _interpret_state(snapshot)
+        status = "awaiting_input" if parsed["is_paused"] else "done"
+        runs_registry.update(run_id, status=status, current_node=parsed["next_node"])
+        return {
+            "run_id": run_id,
+            "status": status,
+            "current_node": parsed["next_node"],
+            "round": parsed["round"],
+            "max_rounds": parsed["max_rounds"],
+            "round_limit_reached": parsed["round_limit_reached"],
+            "preview_ideas": parsed["preview_ideas"],
+            "drafts_with_scores": parsed["drafts_with_scores"],
+            "history_summary": parsed["history_summary"],
+            "interrupt_payload": parsed["interrupt_payload"],
+            "awaiting": parsed["awaiting"],
+            "host_directive": parsed["host_directive"],
+            "finalized_ids": parsed["finalized_ids"],
+        }
 
     # §26.10 R92 — legacy compat path
     if action is None:
@@ -256,6 +317,8 @@ def ideate_step(
         "drafts_with_scores": parsed["drafts_with_scores"],
         "history_summary": parsed["history_summary"],
         "interrupt_payload": parsed["interrupt_payload"],
+        "awaiting": parsed["awaiting"],
+        "host_directive": parsed["host_directive"],
         "finalized_ids": parsed["finalized_ids"],
     }
     # If the user tried to keep iterating but round limit hit, surface a warning.

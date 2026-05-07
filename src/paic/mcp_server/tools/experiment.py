@@ -7,11 +7,53 @@ from typing import Any
 
 from ulid import ULID
 
+from langgraph.types import Command
+
+from paic.config import load_config
 from paic.graphs.experiment_graph import ExperimentDeps, build_experiment_graph
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
+from paic.llm.router import LLMRouter
 from paic.mcp_server import runs as runs_registry
 from paic.workspace.paths import resolve_project
 from paic.workspace.store import load_yaml, save_yaml
+
+
+def _interpret_experiment_state(graph_state) -> dict[str, Any]:
+    is_paused = bool(graph_state.next)
+    values = graph_state.values or {}
+    interrupt_payload: dict[str, Any] | None = None
+    if is_paused and graph_state.tasks:
+        for task in graph_state.tasks:
+            for itr in task.interrupts or []:
+                if itr.value:
+                    interrupt_payload = itr.value
+                    break
+            if interrupt_payload:
+                break
+    awaiting: str | None = None
+    host_directive: dict[str, Any] | None = None
+    if interrupt_payload and isinstance(interrupt_payload, dict):
+        stage = interrupt_payload.get("stage")
+        if stage == "host_orchestration":
+            awaiting = "host_orchestration"
+            host_directive = interrupt_payload.get("directive")
+        elif stage:
+            awaiting = "user"
+    return {
+        "is_paused": is_paused,
+        "experiment_id": values.get("experiment_id"),
+        "awaiting": awaiting,
+        "host_directive": host_directive,
+    }
+
+
+def _make_experiment_deps(paths, llm: LLMClient | None) -> ExperimentDeps:
+    cfg = load_config()
+    return ExperimentDeps(
+        llm=llm or get_default_client(),
+        paths=paths,
+        router=LLMRouter(cfg),
+    )
 
 
 def experiment_start(
@@ -25,8 +67,7 @@ def experiment_start(
     if not paths.paic_dir.exists():
         return {"error": "project_not_initialized", "project_dir": str(paths.root)}
 
-    client = llm or get_default_client()
-    deps = ExperimentDeps(llm=client, paths=paths)
+    deps = _make_experiment_deps(paths, llm)
 
     run_id = str(ULID())
     runs_registry.register(
@@ -61,8 +102,83 @@ def experiment_start(
         runs_registry.update(run_id, status="error", error=repr(exc))
         return {"run_id": run_id, "error": "graph_failed", "detail": repr(exc)}
 
-    values = snapshot.values or {}
-    experiment_id = values.get("experiment_id")
+    parsed = _interpret_experiment_state(snapshot)
+    if parsed["awaiting"] == "host_orchestration":
+        runs_registry.update(run_id, status="awaiting_input", current_node="propose_plan")
+        return {
+            "run_id": run_id,
+            "status": "awaiting_input",
+            "awaiting": "host_orchestration",
+            "host_directive": parsed["host_directive"],
+        }
+
+    experiment_id = parsed["experiment_id"]
+    runs_registry.update(run_id, status="done", current_node=None)
+    return {
+        "run_id": run_id,
+        "experiment_id": experiment_id,
+        "status": "done",
+        "experiment_path": str(paths.experiments_dir / f"{experiment_id}.yaml")
+        if experiment_id
+        else None,
+    }
+
+
+def experiment_resume(
+    project_dir: str,
+    run_id: str,
+    host_response: dict[str, Any],
+    *,
+    llm: LLMClient | None = None,
+) -> dict[str, Any]:
+    """Resume an experiment run paused on a host-orchestration directive.
+
+    The Skill calls this with the JSON the main Claude Code conversation
+    produced for ``experiment_design``; the graph picks up where it left
+    off and finalizes ``experiments/<id>.yaml``.
+    """
+    from pydantic import ValidationError as _VE
+
+    paths = resolve_project(project_dir)
+    if not paths.paic_dir.exists():
+        return {"error": "project_not_initialized", "project_dir": str(paths.root)}
+
+    record = runs_registry.get(run_id)
+    if record is None:
+        return {"error": "run_not_found", "run_id": run_id}
+    if record["kind"] != "experiment":
+        return {"error": "wrong_kind", "expected": "experiment", "got": record["kind"]}
+
+    deps = _make_experiment_deps(paths, llm)
+    graph = build_experiment_graph(deps)
+    config = {"configurable": {"thread_id": record["thread_id"]}}
+
+    try:
+        graph.invoke(Command(resume=host_response), config=config)
+        snapshot = graph.get_state(config)
+    except _VE as exc:
+        paused = _interpret_experiment_state(graph.get_state(config))
+        return {
+            "run_id": run_id,
+            "error": "host_response_invalid",
+            "detail": exc.errors(),
+            "host_directive": paused.get("host_directive"),
+        }
+    except Exception as exc:
+        runs_registry.update(run_id, status="error", error=repr(exc))
+        return {"run_id": run_id, "error": "graph_failed", "detail": repr(exc)}
+
+    parsed = _interpret_experiment_state(snapshot)
+    if parsed["awaiting"] == "host_orchestration":
+        # Another host node downstream; chain a second resume call.
+        return {
+            "run_id": run_id,
+            "status": "awaiting_input",
+            "awaiting": "host_orchestration",
+            "host_directive": parsed["host_directive"],
+        }
+
+    experiment_id = parsed["experiment_id"]
     runs_registry.update(run_id, status="done", current_node=None)
     return {
         "run_id": run_id,

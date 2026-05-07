@@ -8,8 +8,10 @@ from langgraph.types import Command
 from pydantic import ValidationError
 from ulid import ULID
 
+from paic.config import load_config
 from paic.graphs.review_graph import ReviewDeps, build_review_graph
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
+from paic.llm.router import LLMRouter
 from paic.mcp_server import runs as runs_registry
 from paic.personas import PERSONA_NAMES
 from paic.schemas.experiment import ExperimentPlan
@@ -32,6 +34,19 @@ def _interpret_state(graph_state) -> dict[str, Any]:
             if interrupt_payload:
                 break
 
+    # Phase C — distinguish the new ``host_orchestration`` interrupt stage
+    # from the long-standing ``await_user`` stage so Skills can branch
+    # without inspecting the payload's internal shape.
+    awaiting: str | None = None
+    host_directive: dict[str, Any] | None = None
+    if interrupt_payload and isinstance(interrupt_payload, dict):
+        stage = interrupt_payload.get("stage")
+        if stage == "host_orchestration":
+            awaiting = "host_orchestration"
+            host_directive = interrupt_payload.get("directive")
+        elif stage:
+            awaiting = "user"
+
     return {
         "next_node": next_node,
         "is_paused": is_paused,
@@ -40,6 +55,8 @@ def _interpret_state(graph_state) -> dict[str, Any]:
         "moderator_notes": values.get("moderator_notes") or [],
         "verdict": values.get("verdict"),
         "interrupt_payload": interrupt_payload,
+        "awaiting": awaiting,
+        "host_directive": host_directive,
     }
 
 
@@ -47,7 +64,13 @@ def _make_deps(project_dir: str, llm: LLMClient | None) -> ReviewDeps:
     paths = resolve_project(project_dir)
     if not paths.paic_dir.exists():
         raise FileNotFoundError(f".paic/ does not exist at {paths.root}")
-    return ReviewDeps(llm=llm or get_default_client(), paths=paths)
+    cfg = load_config()
+    router = LLMRouter(cfg)
+    return ReviewDeps(
+        llm=llm or get_default_client(),
+        paths=paths,
+        router=router,
+    )
 
 
 def review_start(
@@ -139,6 +162,8 @@ def review_start(
         "round": parsed["round"],
         "max_rounds": parsed["max_rounds"],
         "panel": parsed["interrupt_payload"],
+        "awaiting": parsed["awaiting"],
+        "host_directive": parsed["host_directive"],
         "verdict": parsed["verdict"],
     }
 
@@ -149,6 +174,7 @@ def review_step(
     rebuttal: str | None = None,
     plan_diff: str | None = None,
     skip_to_verdict: bool = False,
+    host_response: dict[str, Any] | None = None,
     *,
     llm: LLMClient | None = None,
 ) -> dict[str, Any]:
@@ -165,6 +191,43 @@ def review_step(
 
     config = {"configurable": {"thread_id": record["thread_id"]}}
     graph = build_review_graph(deps)
+
+    # Host orchestration resume path: the Skill is supplying the host LLM's
+    # output, which feeds straight back into the paused interrupt() call.
+    if host_response is not None:
+        try:
+            graph.invoke(Command(resume=host_response), config=config)
+            snapshot = graph.get_state(config)
+        except ValidationError as exc:
+            # Schema mismatch: graph is still paused on the same interrupt;
+            # surface the directive again so the Skill can retry.
+            paused_snapshot = graph.get_state(config)
+            paused = _interpret_state(paused_snapshot)
+            return {
+                "run_id": run_id,
+                "error": "host_response_invalid",
+                "detail": exc.errors(),
+                "host_directive": paused.get("host_directive"),
+                "awaiting": paused.get("awaiting"),
+            }
+        except Exception as exc:
+            runs_registry.update(run_id, status="error", error=repr(exc))
+            return {"run_id": run_id, "error": "graph_failed", "detail": repr(exc)}
+
+        parsed = _interpret_state(snapshot)
+        status = "done" if parsed["verdict"] else ("awaiting_input" if parsed["is_paused"] else "running")
+        runs_registry.update(run_id, status=status, current_node=parsed["next_node"])
+        return {
+            "run_id": run_id,
+            "status": status,
+            "current_node": parsed["next_node"],
+            "round": parsed["round"],
+            "max_rounds": parsed["max_rounds"],
+            "panel": parsed["interrupt_payload"],
+            "awaiting": parsed["awaiting"],
+            "host_directive": parsed["host_directive"],
+            "verdict": parsed["verdict"],
+        }
 
     payload: dict[str, Any] = {}
     if rebuttal is not None:
@@ -191,6 +254,8 @@ def review_step(
         "round": parsed["round"],
         "max_rounds": parsed["max_rounds"],
         "panel": parsed["interrupt_payload"],
+        "awaiting": parsed["awaiting"],
+        "host_directive": parsed["host_directive"],
         "verdict": parsed["verdict"],
     }
 
@@ -218,5 +283,7 @@ def review_status(project_dir: str, run_id: str) -> dict[str, Any]:
         "round": parsed["round"],
         "max_rounds": parsed["max_rounds"],
         "moderator_notes": parsed["moderator_notes"],
+        "awaiting": parsed["awaiting"],
+        "host_directive": parsed["host_directive"],
         "verdict": parsed["verdict"],
     }

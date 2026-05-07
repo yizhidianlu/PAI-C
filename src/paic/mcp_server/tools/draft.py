@@ -30,6 +30,7 @@ from paic.latex.registry import (
     builtin_root,
     discover_templates,
 )
+from paic.llm.host import build_host_directive
 from paic.llm.router import LLMRouter
 from paic.workspace.paths import resolve_project
 
@@ -244,23 +245,25 @@ def draft_polish_tool(
             if experiment_id and (paths.experiments_dir / f"{experiment_id}.yaml").is_file():
                 experiment = load_yaml(paths.experiments_dir / f"{experiment_id}.yaml")
 
-        return {
-            "mode": "host_orchestration",
-            "section": str(target),
-            "polish_mode": mode,
-            "instruction": instruction,
-            "original": original,
-            "original_hash": _hash(original),
-            "user_prompt": _format_user_prompt(
+        return build_host_directive(
+            node="draft_polish",
+            instructions=_POLISH_HOST_INSTRUCTIONS,
+            user_prompt=_format_user_prompt(
                 mode=mode,
                 instruction=instruction,
                 section_content=original,
                 idea=idea,
                 experiment=experiment,
             ),
-            "next_tool": "mcp__paic__paic_draft_polish_persist",
-            "instructions": _POLISH_HOST_INSTRUCTIONS,
-        }
+            next_tool="mcp__paic__paic_draft_polish_persist",
+            original_hash=_hash(original),
+            metadata={
+                "section": str(target),
+                "polish_mode": mode,
+                "instruction": instruction,
+                "original": original,
+            },
+        ).to_dict()
 
     return polish_section(
         paths,
@@ -364,18 +367,10 @@ def draft_compose_tool(
                 "section_name": section_name,
             }
 
-        return {
-            "mode": "host_orchestration",
-            "section": str(target),
-            "section_name": section_name,
-            "compose_mode": mode,
-            "instruction": instruction,
-            "target_words": target_words,
-            "original": original,
-            "original_hash": _hash(original),
-            "library_size": len(library_keys),
-            "library_cite_keys": sorted(library_keys),
-            "user_prompt": _format_user_prompt(
+        return build_host_directive(
+            node="draft_compose",
+            instructions=_COMPOSE_HOST_INSTRUCTIONS,
+            user_prompt=_format_user_prompt(
                 section_name=section_name,
                 mode=mode,
                 instruction=instruction,
@@ -386,9 +381,19 @@ def draft_compose_tool(
                 library_md=library_md,
                 paper_plan=paper_plan,
             ),
-            "next_tool": "mcp__paic__paic_draft_compose_persist",
-            "instructions": _COMPOSE_HOST_INSTRUCTIONS,
-        }
+            next_tool="mcp__paic__paic_draft_compose_persist",
+            original_hash=_hash(original),
+            metadata={
+                "section": str(target),
+                "section_name": section_name,
+                "compose_mode": mode,
+                "instruction": instruction,
+                "target_words": target_words,
+                "original": original,
+                "library_size": len(library_keys),
+                "library_cite_keys": sorted(library_keys),
+            },
+        ).to_dict()
 
     return compose_section(
         paths,

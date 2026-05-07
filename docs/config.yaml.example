@@ -213,14 +213,16 @@ overleaf:
 #  Routing — 把节点分发到 backend
 # --------------------------------------------------------------------------
 #
-# 已知节点标签：
+# 已知节点标签（**所有节点都支持 host**，详见 docs/host-orchestration.md）：
 #   summarize                                          论文摘要
+#   paper_plan_generate                                /paic-paper-plan
 #   ideate_brainstorm                                  脑暴 N 个 idea
 #   idea_score_{methodology,novelty,impact,reviewer2}  ideate 4-persona panel
 #   experiment_design                                  实验方案
 #   review_persona_{methodology,statistics,domain,reviewer2}
 #   review_moderator / review_verdict                  review graph
-#   draft_polish / draft_compose                       LaTeX 写作（可走 host）
+#   draft_polish / draft_compose                       LaTeX 写作
+#   claim_extract / relwork_cluster / revision_extract  library 流水线
 #   figure_plan / figure_prompt                        /paic-figure
 #
 # Backend 名（routing.default / fallback / overrides 的值）：
@@ -228,8 +230,9 @@ overleaf:
 #   anthropic.api_key | anthropic.claude_agent_sdk     强制 mode
 #   openai.api | openai.compatible
 #   <profile_name>[.<mode>]                            命名 profile（见 §providers）
-#   host                                               主对话处理；仅 overrides 用，
-#                                                      目前 summarize/draft_* 支持
+#   host                                               主对话（host）处理；任意节点都
+#                                                      可设置；详见 host-orchestration.md
+#                                                      不能用作 fallback target。
 
 routing:
   default: anthropic                           # 全局默认

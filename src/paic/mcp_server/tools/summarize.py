@@ -23,6 +23,7 @@ from paic.config import load_config
 from paic.latex.filler import _cite_key
 from paic.llm.backends import HostOrchestrationRequired
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
+from paic.llm.host import build_host_directive
 from paic.llm.prompts import load_prompt
 from paic.llm.router import LLMRouter
 from paic.schemas.paper import PaperRef, PaperSummary
@@ -379,22 +380,27 @@ def summarize_run(
                 )
         return error_payload
 
+    def _summarize_directive() -> dict[str, Any]:
+        return build_host_directive(
+            node="summarize",
+            instructions=HOST_INSTRUCTIONS,
+            schema_hint=_SummaryFields.model_json_schema(),
+            next_tool="mcp__paic__paic_summarize_persist",
+            metadata={
+                "paper_id": paper_id,
+                "cite_key": cite_key,
+                "text_source": text_source,
+                "paper_ref": ref.model_dump(mode="json"),
+                "markdown": body,
+            },
+        ).to_dict()
+
     # Route check: if the summarize node is host-orchestrated, return a
     # directive instead of calling an LLM. We've already loaded the markdown
     # so the Skill can hand it to the main conversation directly.
     router = LLMRouter(cfg)
     if router.is_host_orchestrated("summarize"):
-        return {
-            "mode": "host_orchestration",
-            "paper_id": paper_id,
-            "cite_key": cite_key,
-            "text_source": text_source,
-            "paper_ref": ref.model_dump(mode="json"),
-            "markdown": body,
-            "schema_hint": _SummaryFields.model_json_schema(),
-            "next_tool": "mcp__paic__paic_summarize_persist",
-            "instructions": HOST_INSTRUCTIONS,
-        }
+        return _summarize_directive()
 
     prompt_system = load_prompt("summarize")
     prompt_user = _format_for_llm(ref, body)
@@ -414,17 +420,7 @@ def summarize_run(
     except HostOrchestrationRequired:
         # Defensive: should be caught by is_host_orchestrated above. Keeps
         # the contract crisp if anyone reorders or skips the precheck.
-        return {
-            "mode": "host_orchestration",
-            "paper_id": paper_id,
-            "cite_key": cite_key,
-            "text_source": text_source,
-            "paper_ref": ref.model_dump(mode="json"),
-            "markdown": body,
-            "schema_hint": _SummaryFields.model_json_schema(),
-            "next_tool": "mcp__paic__paic_summarize_persist",
-            "instructions": HOST_INSTRUCTIONS,
-        }
+        return _summarize_directive()
 
     summary = PaperSummary(
         paper=ref,

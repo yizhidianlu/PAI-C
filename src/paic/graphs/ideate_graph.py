@@ -141,6 +141,10 @@ class IdeateState(TypedDict, total=False):
 class IdeateDeps:
     llm: LLMClient
     paths: ProjectPaths
+    router: object | None = None
+    """LLMRouter instance (declared as ``object`` to avoid circular imports).
+    When set and a node routes to ``host``, the LLM call is replaced by a
+    LangGraph ``interrupt(...)`` carrying a ``HostOrchestrationDirective``."""
 
 
 # --- v1 → v2 state adapter (§26.10 R92) ----------------------------------
@@ -340,15 +344,21 @@ def _gather_corpus(state: IdeateState, deps: IdeateDeps) -> dict[str, Any]:
 
 
 def _brainstorm(state: IdeateState, deps: IdeateDeps) -> dict[str, Any]:
+    from paic.llm.host import llm_or_interrupt
+
     state = _normalize_state(state)
     user_msg = _build_brainstorm_user_msg(state)
-    output = deps.llm.complete_json(
+    output = llm_or_interrupt(
+        deps,
+        node="ideate_brainstorm",
         system=load_prompt("ideate_brainstorm"),
         user=user_msg,
         schema=_BrainstormOutput,
         max_tokens=4096,
         temperature=0.6,
-        node="ideate_brainstorm",
+        run_id=state.get("run_id"),
+        resume_tool="mcp__paic__paic_ideate_step",
+        extra_metadata={"round": state.get("round")},
     )
     drafts = [d.model_dump() for d in output.ideas]
     # No scoring here — score_panel does it. Bump round counter.
@@ -465,6 +475,46 @@ def _call_persona(
         return (persona, exc)
 
 
+def _call_persona_with_host(
+    persona: str,
+    drafts: list[dict[str, Any]],
+    score_indices: list[int],
+    deps: IdeateDeps,
+    run_id: str | None,
+) -> _PanelScoreOutput:
+    """Persona scorer that pauses the graph via ``interrupt()`` on host routing.
+
+    Must run on the graph's main task — ``interrupt()`` cannot be raised from
+    a worker thread. ``_score_panel`` enforces this by forcing serial mode
+    when any persona resolves to ``host``.
+    """
+    from paic.llm.host import llm_or_interrupt
+
+    return llm_or_interrupt(
+        deps,
+        node=f"idea_score_{persona}",
+        system=load_prompt(f"idea_score_{persona}"),
+        user=_format_drafts_for_scoring(drafts, score_indices),
+        schema=_PanelScoreOutput,
+        max_tokens=PANEL_MAX_TOKENS,
+        temperature=PERSONA_TEMPERATURES.get(persona, 0.2),
+        run_id=run_id,
+        resume_tool="mcp__paic__paic_ideate_step",
+        extra_metadata={"persona": persona},
+    )
+
+
+def _any_persona_host(deps: IdeateDeps, personas: list[str]) -> bool:
+    """If any persona is host-routed, the panel must run serially —
+    ``interrupt()`` only fires from the graph's main task."""
+    router = getattr(deps, "router", None)
+    if router is None:
+        return False
+    return any(
+        router.is_host_orchestrated(f"idea_score_{p}") for p in personas
+    )
+
+
 def _score_panel(state: IdeateState, deps: IdeateDeps) -> dict[str, Any]:
     state = _normalize_state(state)
     drafts = state["drafts"]
@@ -484,15 +534,28 @@ def _score_panel(state: IdeateState, deps: IdeateDeps) -> dict[str, Any]:
 
     # If everything cached, skip LLM calls entirely.
     if score_indices:
-        # Decide serial vs parallel based on backend
-        any_serial = any(_looks_serial_only(deps.llm, p) for p in personas)
+        # Decide serial vs parallel based on backend or host routing.
+        # ``interrupt()`` cannot fire from a worker thread, so any host-routed
+        # persona forces the whole panel serial — see _any_persona_host.
+        any_serial = (
+            _any_persona_host(deps, personas)
+            or any(_looks_serial_only(deps.llm, p) for p in personas)
+        )
         results: dict[str, _PanelScoreOutput] = {}
         if any_serial or len(personas) <= 1:
+            run_id = state.get("run_id")
             for persona in personas:
-                _, res = _call_persona(persona, drafts, score_indices, deps.llm)
-                if isinstance(res, Exception):
-                    raise res
-                results[persona] = res
+                if deps.router is not None and deps.router.is_host_orchestrated(
+                    f"idea_score_{persona}"
+                ):
+                    results[persona] = _call_persona_with_host(
+                        persona, drafts, score_indices, deps, run_id
+                    )
+                else:
+                    _, res = _call_persona(persona, drafts, score_indices, deps.llm)
+                    if isinstance(res, Exception):
+                        raise res
+                    results[persona] = res
         else:
             with ThreadPoolExecutor(max_workers=len(personas)) as ex:
                 futures = {

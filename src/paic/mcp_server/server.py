@@ -248,6 +248,33 @@ def paic_paper_plan_update(
 
 
 @mcp.tool()
+def paic_paper_plan_persist(
+    project_dir: str,
+    fields: dict[str, Any],
+    idea_id: str,
+    experiment_id: str | None = None,
+    target_venue: str | None = None,
+    audience: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Persist a host-generated paper plan (LLM-free).
+
+    Companion to ``paic_paper_plan_create`` in host-orchestration mode.
+    Validates ``fields`` against the LLM-facing plan schema, then writes
+    ``paper_plan.yaml`` (unless ``dry_run``).
+    """
+    return paper_plan_tools.paper_plan_persist_tool(
+        project_dir,
+        fields=fields,
+        idea_id=idea_id,
+        experiment_id=experiment_id,
+        target_venue=target_venue,
+        audience=audience,
+        dry_run=dry_run,
+    )
+
+
+@mcp.tool()
 def paic_paper_plan_status(project_dir: str) -> dict[str, Any]:
     """Read the paper plan if present; report ``exists=False`` otherwise.
 
@@ -343,6 +370,29 @@ def paic_claims_extract(
 
 
 @mcp.tool()
+def paic_claims_extract_persist(
+    project_dir: str,
+    extracted: dict[str, Any],
+    section_name: str,
+    section_text: str,
+    contribution_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist host-generated claim extraction (LLM-free).
+
+    Companion to ``paic_claims_extract`` in host-orchestration mode. Validates
+    ``extracted`` against the LLM-facing schema, augments with inline
+    ``\\cite{}`` keys from ``section_text``, and merges into ``claims.yaml``.
+    """
+    return claims_tools.claims_extract_persist_tool(
+        project_dir,
+        extracted,
+        section_name=section_name,
+        section_text=section_text,
+        contribution_id=contribution_id,
+    )
+
+
+@mcp.tool()
 def paic_claims_validate(
     project_dir: str,
     semantic: bool = False,
@@ -404,6 +454,20 @@ def paic_related_work_cluster(project_dir: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def paic_relwork_cluster_persist(
+    project_dir: str,
+    clusters: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist host-generated related-work clusters (LLM-free).
+
+    Companion to ``paic_related_work_cluster`` in host-orchestration mode.
+    """
+    return related_work_tools.related_work_cluster_persist_tool(
+        project_dir, clusters
+    )
+
+
+@mcp.tool()
 def paic_related_work_status(project_dir: str) -> dict[str, Any]:
     """Read the existing related-work clusters; report ``exists=False`` otherwise."""
     return related_work_tools.related_work_status_tool(project_dir)
@@ -426,6 +490,21 @@ def paic_revision_extract(
     """
     return revisions_tools.revision_extract_tool(
         project_dir, review_payload, round_num=round_num,
+    )
+
+
+@mcp.tool()
+def paic_revision_extract_persist(
+    project_dir: str,
+    extracted: dict[str, Any],
+    round_num: int | None = None,
+) -> dict[str, Any]:
+    """Persist host-generated revision tasks (LLM-free).
+
+    Companion to ``paic_revision_extract`` in host-orchestration mode.
+    """
+    return revisions_tools.revision_extract_persist_tool(
+        project_dir, extracted, round_num=round_num
     )
 
 
@@ -741,14 +820,30 @@ def paic_ideate_step(
     run_id: str,
     keep: list[int] | None = None,
     feedback: str | None = None,
+    host_response: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Resume an ideate run after the user has filtered drafts.
+    """Resume an ideate run.
 
-    ``keep`` is a list of indices into the ``preview_ideas`` from the start
-    response. If omitted, all drafts are finalized. ``feedback`` is an
-    optional Chinese/English comment recorded with the run.
+    Two distinct resume paths share this tool:
+
+    - **User decision** (``keep`` / ``feedback``): the graph paused on the
+      ``await_user_decision`` interrupt and is waiting for filter / refine
+      input.
+    - **Host orchestration** (``host_response``): a graph LLM node was
+      routed to ``host`` and the graph is paused on a directive interrupt;
+      the Skill ran the directive in the main conversation and is now
+      handing back the structured JSON output.
+
+    ``status[awaiting]`` tells the Skill which path the next call must
+    take.
     """
-    return ideate_tools.ideate_step(project_dir, run_id, keep=keep, feedback=feedback)
+    return ideate_tools.ideate_step(
+        project_dir,
+        run_id,
+        keep=keep,
+        feedback=feedback,
+        host_response=host_response,
+    )
 
 
 # --- Experiment & review tools --------------------------------------------
@@ -783,6 +878,21 @@ def paic_experiment_start(
     datasets, venue_target) the LLM should respect when designing the plan.
     """
     return experiment_tools.experiment_start(project_dir, idea_id, constraints=constraints)
+
+
+@mcp.tool()
+def paic_experiment_resume(
+    project_dir: str,
+    run_id: str,
+    host_response: dict[str, Any],
+) -> dict[str, Any]:
+    """Resume an experiment run paused on a host-orchestration directive.
+
+    Used when ``routing.overrides.experiment_design = host``. The Skill ran
+    the ``experiment_design`` directive in the main Claude Code conversation
+    and is handing back the structured JSON output here.
+    """
+    return experiment_tools.experiment_resume(project_dir, run_id, host_response=host_response)
 
 
 @mcp.tool()
@@ -856,14 +966,22 @@ def paic_review_step(
     rebuttal: str | None = None,
     plan_diff: str | None = None,
     skip_to_verdict: bool = False,
+    host_response: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Continue a paused review run.
 
-    ``rebuttal``: the author's response to this round's panel synthesis.
-    ``plan_diff``: optional fully-patched experiment YAML (string) to replace
-    the current plan before the next round.
-    ``skip_to_verdict``: if True, terminate after the current round and emit
-    the final verdict immediately.
+    Two distinct resume paths share this tool:
+
+    - **User decision** (``rebuttal`` / ``plan_diff`` / ``skip_to_verdict``):
+      the graph paused on the per-round ``await_user`` interrupt and is
+      waiting for an author response.
+    - **Host orchestration** (``host_response``): a graph LLM node was
+      routed to ``host`` and the graph is paused on a directive interrupt;
+      the Skill ran the directive in the main conversation and is now
+      handing back the structured JSON output.
+
+    ``status[awaiting]`` tells the Skill which path the next call must
+    take.
     """
     return review_tools.review_step(
         project_dir,
@@ -871,6 +989,7 @@ def paic_review_step(
         rebuttal=rebuttal,
         plan_diff=plan_diff,
         skip_to_verdict=skip_to_verdict,
+        host_response=host_response,
     )
 
 
@@ -1272,6 +1391,54 @@ def paic_figure_generate(
     return figure_tools.figure_generate(
         project_dir,
         slot,
+        description=description,
+        free_slot=free_slot,
+        n=n,
+    )
+
+
+@mcp.tool()
+def paic_figure_plan_persist(
+    project_dir: str,
+    slots: dict[str, Any],
+    max_figures: int = 4,
+    draft_path: str | None = None,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Persist a host-generated figure plan (LLM-free).
+
+    Companion to ``paic_figure_plan`` in host-orchestration mode for the
+    ``figure_plan`` node.
+    """
+    return figure_tools.figure_plan_persist(
+        project_dir,
+        slots=slots,
+        max_figures=max_figures,
+        draft_path=draft_path,
+        overwrite=overwrite,
+    )
+
+
+@mcp.tool()
+def paic_figure_generate_with_prompt(
+    project_dir: str,
+    slot: str,
+    prompt: str,
+    description: str | None = None,
+    free_slot: bool = False,
+    n: int = 1,
+) -> dict[str, Any]:
+    """Render an image using a host-supplied prompt (no LLM call).
+
+    Companion to ``paic_figure_generate`` in host-orchestration mode for the
+    ``figure_prompt`` node. The Skill obtains ``prompt`` from the host
+    directive, then calls this tool to actually render via the configured
+    image backend.
+    """
+    return figure_tools.figure_generate_with_prompt(
+        project_dir,
+        slot,
+        image_prompt=prompt,
         description=description,
         free_slot=free_slot,
         n=n,

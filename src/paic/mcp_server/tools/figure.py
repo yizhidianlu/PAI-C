@@ -26,8 +26,17 @@ from paic.images.backend import (
     OpenAICompatibleImageBackend,
     get_default_image_backend,
 )
-from paic.images.planner import FigureSlot, plan_figures
-from paic.images.prompt import synthesize_image_prompt
+from paic.images.planner import (
+    FigureSlot,
+    _FigurePlanOutput,
+    _ensure_unique,
+    _gather_claim_context,
+    _gather_paper_context,
+    _gather_paper_plan_context,
+    plan_figures,
+    verify_claim_coverage,
+)
+from paic.images.prompt import _ImagePromptOutput, synthesize_image_prompt
 from paic.images.storage import (
     figure_latex_snippet,
     latest_version,
@@ -38,6 +47,9 @@ from paic.images.storage import (
     version_bytes,
 )
 from paic.llm.client import LLMClient, get_default_client
+from paic.llm.host import build_host_directive
+from paic.llm.prompts import load_prompt
+from paic.llm.router import LLMRouter
 from paic.workspace.paths import ProjectPaths, ensure_project_layout, resolve_project
 from paic.workspace.store import load_yaml, save_yaml
 
@@ -147,6 +159,40 @@ def figure_plan(
                 ),
             }
 
+    from paic.config import load_config
+    cfg = load_config()
+    router = LLMRouter(cfg)
+    if router.is_host_orchestrated("figure_plan"):
+        body_parts = [_gather_paper_context(paths, draft_p)]
+        plan_ctx = _gather_paper_plan_context(paths)
+        if plan_ctx:
+            body_parts.append(plan_ctx)
+        claims_ctx = _gather_claim_context(paths)
+        if claims_ctx:
+            body_parts.append(claims_ctx)
+        body = "\n\n".join(p for p in body_parts if p)
+        return build_host_directive(
+            node="figure_plan",
+            instructions=(
+                "Propose ≤max_figures figure slots for the paper, matching "
+                "`schema_hint`. Then call mcp__paic__paic_figure_plan_persist "
+                "with `slots=<your JSON>` plus `max_figures` and `draft_path` "
+                "from `metadata`."
+            ),
+            user_prompt=(
+                f"max_figures: {max_figures}\n\n"
+                f"PAPER CONTEXT:\n{body}\n\n"
+                "Return the JSON object now."
+            ),
+            schema_hint=_FigurePlanOutput.model_json_schema(),
+            next_tool="mcp__paic__paic_figure_plan_persist",
+            metadata={
+                "max_figures": max_figures,
+                "draft_path": str(draft_p) if draft_p else None,
+                "overwrite": overwrite,
+            },
+        ).to_dict()
+
     client = llm or get_default_client()
     try:
         slots = plan_figures(
@@ -155,11 +201,23 @@ def figure_plan(
     except Exception as exc:  # noqa: BLE001 — bubble LLM/router errors as structured
         return {"error": "plan_failed", "detail": repr(exc)}
 
-    # §quality phase 9 — verify every contribution claim has a figure /
-    # table / algorithm binding (or an explicit no_visual_reason).
-    from paic.images.planner import verify_claim_coverage
-    coverage_warnings = verify_claim_coverage(paths, slots)
+    return _persist_figure_plan(
+        paths,
+        slots,
+        draft_p=draft_p,
+        plan_file=plan_file,
+    )
 
+
+def _persist_figure_plan(
+    paths: ProjectPaths,
+    slots: list[FigureSlot],
+    *,
+    draft_p: Path | None,
+    plan_file: Path,
+) -> dict[str, Any]:
+    """Common tail for figure-plan persistence (LLM and host paths)."""
+    coverage_warnings = verify_claim_coverage(paths, slots)
     plan_payload = {
         "plan_id": str(ULID()),
         "draft_path": str(draft_p) if draft_p else None,
@@ -176,6 +234,56 @@ def figure_plan(
         "slots": plan_payload["slots"],
         "coverage_warnings": coverage_warnings,
     }
+
+
+def figure_plan_persist(
+    project_dir: str,
+    slots: dict[str, Any],
+    max_figures: int = 4,
+    draft_path: str | None = None,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Persist a host-generated figure plan (LLM-free)."""
+    from pydantic import ValidationError
+
+    paths_or_err = _open_project(project_dir)
+    if isinstance(paths_or_err, dict):
+        return paths_or_err
+    paths = paths_or_err
+
+    plan_file = _plan_path(paths)
+    if plan_file.exists() and not overwrite:
+        return {
+            "error": "plan_exists",
+            "plan_path": str(plan_file),
+        }
+
+    draft_p = Path(draft_path).expanduser().resolve() if draft_path else None
+
+    try:
+        raw = _FigurePlanOutput.model_validate(slots)
+    except ValidationError as exc:
+        return {"error": "schema_validation_failed", "detail": exc.errors()}
+
+    capped = raw.slots[:max_figures]
+    deduped = _ensure_unique(capped)
+    slot_objs = [
+        FigureSlot(
+            slot=s.slot,
+            kind=s.kind,
+            section_hint=s.section_hint,
+            position_hint=s.position_hint,
+            scene_description=s.scene_description,
+            caption_hint=s.caption_hint,
+            rationale=s.rationale,
+            supporting_claims=tuple(s.supporting_claims),
+            no_visual_reason=s.no_visual_reason,
+        )
+        for s in deduped
+    ]
+    return _persist_figure_plan(
+        paths, slot_objs, draft_p=draft_p, plan_file=plan_file
+    )
 
 
 # ---------------------------------------------------------------------- generate
@@ -231,6 +339,43 @@ def figure_generate(
         return backend_or_err
     backend = backend_or_err
 
+    from paic.config import load_config
+    cfg = load_config()
+    router = LLMRouter(cfg)
+    if router.is_host_orchestrated("figure_prompt"):
+        # Host generates the image prompt; we then pass it to
+        # ``paic_figure_generate_with_prompt`` to actually render via the
+        # configured image backend.
+        user_parts = [
+            f"slot: {slot_obj.slot}",
+            f"kind: {slot_obj.kind}",
+            f"section: {slot_obj.section_hint}",
+            f"scene_description: {slot_obj.scene_description}",
+            f"caption_hint: {slot_obj.caption_hint}",
+        ]
+        extra = description if not free_slot else None
+        if extra:
+            user_parts.append(f"extra_instruction: {extra}")
+        return build_host_directive(
+            node="figure_prompt",
+            instructions=(
+                "Synthesize a single image-generation prompt matching "
+                "`schema_hint`. Then call "
+                "mcp__paic__paic_figure_generate_with_prompt with the "
+                "`prompt` value plus the original `slot` / `n` / `free_slot` "
+                "/ `description` from `metadata`."
+            ),
+            user_prompt="\n".join(user_parts),
+            schema_hint=_ImagePromptOutput.model_json_schema(),
+            next_tool="mcp__paic__paic_figure_generate_with_prompt",
+            metadata={
+                "slot": slot_obj.slot,
+                "n": n,
+                "free_slot": free_slot,
+                "description": description,
+            },
+        ).to_dict()
+
     client = llm or get_default_client()
     try:
         image_prompt = synthesize_image_prompt(
@@ -238,6 +383,86 @@ def figure_generate(
         )
     except Exception as exc:  # noqa: BLE001
         return {"error": "prompt_synthesis_failed", "detail": repr(exc)}
+
+    try:
+        images = backend.generate(image_prompt, n=n)
+    except ImageBackendUnavailable as exc:
+        return {"error": "image_backend_failed", "detail": str(exc)}
+
+    versions: list[dict[str, Any]] = []
+    for img in images:
+        label, png_path = save_version(
+            paths,
+            slot_obj.slot,
+            img.png_bytes,
+            kind="generate",
+            prompt=image_prompt,
+            model=backend.model,
+            parent_version=None,
+            extra={"revised_prompt": img.revised_prompt} if img.revised_prompt else None,
+        )
+        versions.append(
+            {
+                "version": label,
+                "png_path": str(png_path),
+                "latex_snippet": figure_latex_snippet(
+                    slot_obj.slot, label, caption=slot_obj.caption_hint
+                ),
+            }
+        )
+    primary = versions[0]
+    return {
+        "slot": slot_obj.slot,
+        "version": primary["version"],
+        "png_path": primary["png_path"],
+        "latex_snippet": primary["latex_snippet"],
+        "image_prompt": image_prompt,
+        "all_versions": versions if len(versions) > 1 else None,
+    }
+
+
+def figure_generate_with_prompt(
+    project_dir: str,
+    slot: str,
+    image_prompt: str,
+    *,
+    description: str | None = None,
+    free_slot: bool = False,
+    n: int = 1,
+    backend: OpenAICompatibleImageBackend | None = None,
+) -> dict[str, Any]:
+    """Render an image using a host-supplied prompt (no LLM call).
+
+    Pair with ``figure_generate`` host orchestration: host fills in the
+    prompt string from the directive, then this tool feeds the prompt
+    straight into the image backend without re-running prompt synthesis.
+    """
+    paths_or_err = _open_project(project_dir)
+    if isinstance(paths_or_err, dict):
+        return paths_or_err
+    paths = paths_or_err
+
+    plan = _load_plan(paths)
+    slot_obj = _slot_from_plan(plan or {}, slot) if plan else None
+    if slot_obj is None:
+        if not free_slot:
+            return {"error": "slot_not_in_plan", "slot": slot}
+        if not description:
+            return {"error": "description_required"}
+        slot_obj = FigureSlot(
+            slot=slot,
+            kind="concept",
+            section_hint="",
+            position_hint="",
+            scene_description=description,
+            caption_hint="",
+            rationale="",
+        )
+
+    backend_or_err = _backend_or_error(backend)
+    if isinstance(backend_or_err, dict):
+        return backend_or_err
+    backend = backend_or_err
 
     try:
         images = backend.generate(image_prompt, n=n)

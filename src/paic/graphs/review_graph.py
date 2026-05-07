@@ -49,7 +49,9 @@ from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
 from paic.llm.client import LLMClient
+from paic.llm.host import llm_or_interrupt
 from paic.llm.prompts import load_prompt
+from paic.llm.router import LLMRouter
 from paic.personas import PERSONA_NAMES, load_persona
 from paic.schemas.review import (
     Critique,
@@ -121,6 +123,10 @@ class ReviewState(TypedDict, total=False):
 class ReviewDeps:
     llm: LLMClient
     paths: ProjectPaths
+    router: LLMRouter | None = None
+    """When set and a node routes to ``host``, the LLM call is replaced by a
+    LangGraph ``interrupt(...)`` carrying a ``HostOrchestrationDirective``.
+    The Skill resumes via ``paic_review_step(host_response=...)``."""
 
 
 # --- Helpers --------------------------------------------------------------
@@ -329,13 +335,17 @@ def _persona_critic(state: ReviewState, deps: ReviewDeps) -> dict[str, Any]:
         + "\n\n### RELATED PAPERS\n\n"
         + _format_related_papers(state.get("related_papers", []))
     )
-    output = deps.llm.complete_json(
+    output = llm_or_interrupt(
+        deps,
+        node=f"review_persona_{persona}",
         system=load_persona(persona),
         user=user_msg,
         schema=_PersonaCritiqueOutput,
         max_tokens=2048,
         temperature=0.3,
-        node=f"review_persona_{persona}",
+        run_id=state.get("run_id"),
+        resume_tool="mcp__paic__paic_review_step",
+        extra_metadata={"persona": persona, "round": state.get("round")},
     )
     current_round[persona] = [c.model_dump() for c in output.critiques]
     history[-1] = current_round
@@ -363,13 +373,17 @@ def _moderator_synthesize(state: ReviewState, deps: ReviewDeps) -> dict[str, Any
         + "\n\n### THIS ROUND'S CRITIQUES\n\n"
         + "\n".join(critiques_block)
     )
-    output = deps.llm.complete_json(
+    output = llm_or_interrupt(
+        deps,
+        node="review_moderator",
         system=load_prompt("review_moderator"),
         user=user_msg,
         schema=_ModeratorOutput,
         max_tokens=2048,
         temperature=0.2,
-        node="review_moderator",
+        run_id=state.get("run_id"),
+        resume_tool="mcp__paic__paic_review_step",
+        extra_metadata={"round": state.get("round")},
     )
     notes = list(state.get("moderator_notes") or [])
     notes.append(output.model_dump())
@@ -448,13 +462,16 @@ def _verdict(state: ReviewState, deps: ReviewDeps) -> dict[str, Any]:
         + "\n\n### REVIEW HISTORY\n\n"
         + _format_round_history(state)
     )
-    output = deps.llm.complete_json(
+    output = llm_or_interrupt(
+        deps,
+        node="review_verdict",
         system=load_prompt("review_verdict"),
         user=user_msg,
         schema=_VerdictOutput,
         max_tokens=2048,
         temperature=0.1,
-        node="review_verdict",
+        run_id=state.get("run_id"),
+        resume_tool="mcp__paic__paic_review_step",
     )
     verdict = ReviewVerdict.model_validate(output.model_dump())
 
