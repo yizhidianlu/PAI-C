@@ -9,7 +9,9 @@ allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_stat
 ## When to use
 
 - User says: "起 paper plan" / "draft the paper plan" / "把 contribution 列表锁一下" / "before I compose intro 我先想清楚 paper 整体"
-- After `/paic-experiment` produces an experiment plan but **before** `/paic-draft compose` — paper_plan grounds compose so各 section 用词、contribution 顺序、figure 槽位都一致。
+- 两种合法顺序，都在 `/paic-draft compose` 之前完成：
+  - **Experiment-first**（v0.1 默认）：`/paic-ideate` → `/paic-experiment` → `/paic-paper-plan`，paper_plan 一次到位、含实验细节。
+  - **Thesis-first**（thesis-driven 写作的自然顺序）：`/paic-ideate` → `/paic-paper-plan`（仅 idea，先锁论点 + 贡献 + section 意图）→ `/paic-experiment`（按贡献设计实验）→ 用 update 绑 `experiment_id` 或删文件重 create。
 - 用户想改 thesis / contribution / terminology — 用 `update` 走小步修订，不要重新 create。
 
 ## What you do
@@ -23,10 +25,15 @@ allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_stat
 
 2. **Create**（首次或重建）：
 
-   2a. **找 idea + experiment id**：
-   - 用户给了就用。
-   - 没给：调 `paic_workspace_status`，列出最近的 idea / experiment，让用户选。
-   - 都没有：提示「先跑 `/paic-ideate` + `/paic-experiment`，再来 paper plan」。
+   2a. **找 idea_id**（必填）+ **判断要不要带 experiment_id**（可选）：
+   - **idea_id**：
+     - 用户给了就用。
+     - 没给：调 `paic_workspace_status`，列出最近的 idea 让用户选。
+     - 一个 idea 都没有：提示「先跑 `/paic-ideate` 拿到 idea_id 再来 paper plan」。
+   - **experiment_id**（可选）：
+     - 用户已经显式给了 → 直接用（experiment-first 路径）。
+     - 用户**没给**：从 `paic_workspace_status` 看这个 idea 是否已经有对应 experiment。有 → 询问「检测到该 idea 有 experiment `<exp_id>`，要带上吗？带 = experiment-first（一次锁完整 plan）；不带 = thesis-first（plan 仅 idea，跑完 /paic-experiment 后再 update 绑定）。(y/n，默认 y)」。没有 → 直接走 thesis-first（不带 experiment_id），告诉用户「当前先按 idea 锁论点 + 贡献，跑完 `/paic-experiment` 后 `paic_paper_plan_update(patch={'experiment_id': '<exp_id>'})` 绑定，或删 plan 重 create」。
+   - **不要**主动催用户先去跑 `/paic-experiment`——thesis-first 是合法顺序。
 
    2b. **可选输入**：`target_venue`（"NeurIPS 2026" / "ICLR" / null）+ `audience`（一句话；没有就 null）。用户没主动说就不要硬问。
 
@@ -35,7 +42,7 @@ allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_stat
    mcp__paic__paic_paper_plan_create(
      project_dir=<cwd>,
      idea_id="<id>",
-     experiment_id="<id>",
+     experiment_id=<id 或 None>,   # None / 省略 = thesis-first；method/eval 高层描述
      target_venue=<str|null>,
      audience=<str|null>,
      dry_run=false,
@@ -44,7 +51,8 @@ allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_stat
 
    2d. **错误处理**：
    - `paper_plan_already_exists` → 跳到 step 3（update）或问用户要不要先删 yaml 再重做
-   - `idea_not_found` / `experiment_not_found` → 让用户 `/paic-status` 找正确 id
+   - `idea_not_found` → 让用户 `/paic-status` 找正确 id
+   - `experiment_not_found` → **只有用户显式传了不存在的 experiment_id 才会触发**；让用户 `/paic-status` 校对 id，或省略 experiment_id 走 thesis-first
    - `llm_unavailable` → 透传错误信息
 
 3. **Update**（用户已经想改某些字段）：

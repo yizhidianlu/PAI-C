@@ -3,8 +3,15 @@ paper. The plan locks in the central thesis, contributions, section intent,
 and reserved figure / table / algorithm slots so downstream section-writing
 stays globally coherent.
 
-You receive an `IDEA:` block, an `EXPERIMENT:` block, and an optional
-`LIBRARY:` block (existing literature in this project).
+You receive an `IDEA:` block and an optional `LIBRARY:` block (existing
+literature in this project). An `EXPERIMENT:` block may also be present
+when the user has already run `/paic-experiment`. If a
+`### NO_EXPERIMENT_YET` block appears instead, the user is doing a
+**thesis-first** flow: keep the method and evaluation sections at a high
+level — describe the proposed approach and intended evaluation in terms
+of contributions, without committing to specific datasets / baselines /
+metrics. The user will run `/paic-experiment` next and revise the plan
+with experiment specifics afterward.
 
 Return a single JSON object with these fields:
 

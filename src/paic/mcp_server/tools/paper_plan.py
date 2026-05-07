@@ -102,14 +102,20 @@ def _format_library_for_llm(paths: ProjectPaths, max_papers: int = 60) -> str:
 def paper_plan_create_tool(
     project_dir: str,
     idea_id: str,
-    experiment_id: str,
+    experiment_id: str | None = None,
     target_venue: str | None = None,
     audience: str | None = None,
     dry_run: bool = False,
     *,
     llm: LLMClient | None = None,
 ) -> dict[str, Any]:
-    """Generate ``paper_plan.yaml`` from an idea + experiment + library.
+    """Generate ``paper_plan.yaml`` from an idea + (optional) experiment + library.
+
+    ``experiment_id`` is optional: when omitted, the plan is seeded from the
+    idea + library only and the LLM is told to keep method / evaluation at
+    a high level. The user is expected to run ``/paic-experiment`` afterward
+    and either patch ``experiment_id`` via ``paper_plan_update_tool`` or
+    delete the plan and recreate it with the experiment bound.
 
     Errors out if a plan already exists; use ``paper_plan_update_tool`` to
     revise. Set ``dry_run=True`` to return the generated plan without
@@ -132,16 +138,29 @@ def paper_plan_create_tool(
     idea = load_yaml(idea_path)
     IdeaCard.model_validate(idea)
 
-    exp_path = paths.experiments_dir / f"{experiment_id}.yaml"
-    if not exp_path.is_file():
-        return {"error": "experiment_not_found", "experiment_id": experiment_id}
-    experiment = load_yaml(exp_path)
+    experiment: dict[str, Any] | None = None
+    if experiment_id is not None:
+        exp_path = paths.experiments_dir / f"{experiment_id}.yaml"
+        if not exp_path.is_file():
+            return {"error": "experiment_not_found", "experiment_id": experiment_id}
+        experiment = load_yaml(exp_path)
 
-    user_msg = "\n\n".join(filter(None, [
+    user_msg_parts = [
         _format_idea_for_llm(idea),
-        _format_experiment_for_llm(experiment),
+        _format_experiment_for_llm(experiment) if experiment is not None else "",
         _format_library_for_llm(paths),
-    ]))
+    ]
+    if experiment is None:
+        user_msg_parts.append(
+            "### NO_EXPERIMENT_YET\n"
+            "No experiment plan has been generated yet. Keep the method and "
+            "evaluation sections at a high level — describe the proposed "
+            "approach and intended evaluation in terms of contributions, "
+            "without committing to specific datasets / baselines / metrics. "
+            "The user will run /paic-experiment next and then revise this "
+            "plan with experiment specifics."
+        )
+    user_msg = "\n\n".join(filter(None, user_msg_parts))
     if target_venue:
         user_msg += f"\n\n### CONSTRAINTS\nTarget venue: {target_venue}"
     if audience:

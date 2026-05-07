@@ -35,7 +35,7 @@ class _StubLLM:
         self.calls: list[dict] = []
 
     def complete_json(self, *, system, user, schema, max_tokens=4096, temperature=0.0, node=None):
-        self.calls.append({"node": node, "schema": schema.__name__})
+        self.calls.append({"node": node, "schema": schema.__name__, "user": user})
         assert schema is _PlanFields
         return self.response
 
@@ -200,6 +200,37 @@ def test_create_missing_experiment(project):
         str(project), idea_id="idea_1", experiment_id="missing", llm=llm
     )
     assert res["error"] == "experiment_not_found"
+
+
+def test_create_without_experiment_thesis_first(project):
+    """Thesis-first path: omit experiment_id, plan generated from idea + library only."""
+    llm = _StubLLM(_stub_plan_fields())
+    res = paper_plan_create_tool(
+        str(project), idea_id="idea_1", llm=llm,
+    )
+    assert res.get("error") is None
+    assert res["written"] is True
+    plan = res["plan"]
+    assert plan["idea_id"] == "idea_1"
+    assert plan["experiment_id"] is None
+    # Prompt must signal the absence so the LLM keeps method/eval high-level.
+    assert any("NO_EXPERIMENT_YET" in (call.get("user") or "") for call in llm.calls)
+    # And must NOT contain an EXPERIMENT block.
+    assert not any("### EXPERIMENT" in (call.get("user") or "") for call in llm.calls)
+    paths = resolve_project(str(project))
+    assert paths.paper_plan_yaml.exists()
+    on_disk = load_yaml(paths.paper_plan_yaml)
+    assert on_disk["experiment_id"] is None
+
+
+def test_update_can_bind_experiment_id_after_thesis_first(project):
+    """Thesis-first → /paic-experiment → update(patch=experiment_id) binds the experiment."""
+    llm = _StubLLM(_stub_plan_fields())
+    paper_plan_create_tool(str(project), idea_id="idea_1", llm=llm)
+    res = paper_plan_update_tool(str(project), patch={"experiment_id": "exp_1"})
+    assert res.get("error") is None
+    assert "experiment_id" in res["changed_keys"]
+    assert res["plan"]["experiment_id"] == "exp_1"
 
 
 def test_create_with_explicit_venue_overrides_llm_only_when_llm_blank(project):

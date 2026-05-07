@@ -184,12 +184,12 @@ def paic_search_recall_check(
 def paic_paper_plan_create(
     project_dir: str,
     idea_id: str,
-    experiment_id: str,
+    experiment_id: str | None = None,
     target_venue: str | None = None,
     audience: str | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Generate the global paper plan from an idea + experiment + library.
+    """Generate the global paper plan from an idea + (optional) experiment + library.
 
     Produces ``<project>/.paic/plans/paper_plan.yaml`` — a singleton file that
     captures the paper's central thesis, contributions, section intent,
@@ -197,10 +197,24 @@ def paic_paper_plan_create(
     Downstream compose / claim / quality-gate stages ground their output
     against this plan to keep the paper globally coherent.
 
+    Two valid orderings:
+
+    - **Experiment-first**: ``/paic-ideate`` → ``/paic-experiment`` →
+      ``paic_paper_plan_create(idea_id, experiment_id)``. Plan reflects
+      experiment specifics (datasets / baselines / metrics) at create time.
+    - **Thesis-first**: ``/paic-ideate`` →
+      ``paic_paper_plan_create(idea_id)`` (omit ``experiment_id``) →
+      ``/paic-experiment`` (designed to support the locked contributions)
+      → either ``paic_paper_plan_update(patch={"experiment_id": ...})`` to
+      bind, or delete + recreate with experiment included.
+
     Args:
         project_dir: PAI-C project root.
         idea_id: source ``IdeaCard`` (must already exist under ``ideas/``).
-        experiment_id: source ``ExperimentPlan``.
+        experiment_id: source ``ExperimentPlan``. **Optional** — when omitted,
+            method / evaluation are kept high-level (no datasets / baselines /
+            metrics committed) so the plan stays revisable after the user
+            runs ``/paic-experiment``.
         target_venue: optional venue hint (e.g. "NeurIPS 2026").
         audience: optional one-phrase reader description.
         dry_run: return the generated plan without writing to disk.

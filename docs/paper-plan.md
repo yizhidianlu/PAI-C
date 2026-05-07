@@ -14,7 +14,7 @@ PAI-C 在 v0.1 之上加了一组 **paper-quality** 工具，把「散点式生�
   /paic-ingest           # 入库 + 下载
   /paic-summarize        # 结构化摘要
   /paic-ideate           # 生成 idea
-  /paic-experiment       # 实验方案
+  /paic-experiment       # 实验方案（experiment-first 路径）
   /paic-paper-plan       # paper-quality 入口：锁全局论点
   /paic-review           # 多轮评审，自动产 RevisionTask
   /paic-related-work-cluster   # 给 related work 分群
@@ -24,7 +24,10 @@ PAI-C 在 v0.1 之上加了一组 **paper-quality** 工具，把「散点式生�
   /paic-finalize         # 8 类检查（quality-gate.md）
 ```
 
-`/paic-paper-plan` 是 paper-quality 阶段的入口，建议在 `/paic-experiment` 之后、`/paic-draft compose` 之前跑一次。
+`/paic-paper-plan` 是 paper-quality 阶段的入口。**两种合法顺序**，都必须在 `/paic-draft compose` 之前完成：
+
+- **Experiment-first**（默认；v0.1 文档示例）：`/paic-ideate` → `/paic-experiment` → `/paic-paper-plan`。一次生成含实验细节的完整 paper plan。
+- **Thesis-first**（thesis-driven 写作的自然顺序）：`/paic-ideate` → `/paic-paper-plan`（**省略 `experiment_id`**，仅 idea 锁论点 + 贡献 + section 意图，方法 / 评估保持高层描述）→ `/paic-experiment`（按 paper_plan.contributions 设计实验）→ `paic_paper_plan_update(patch={"experiment_id": "<id>"})` 绑定，或删 `paper_plan.yaml` 重 create。
 
 ---
 
@@ -51,13 +54,13 @@ PAI-C 在 v0.1 之上加了一组 **paper-quality** 工具，把「散点式生�
 ### 三个工具
 
 ```text
-paic_paper_plan_create(project_dir, idea_id, experiment_id,
+paic_paper_plan_create(project_dir, idea_id, experiment_id=None,
                        target_venue=None, audience=None, dry_run=False)
 paic_paper_plan_update(project_dir, patch={"thesis": "...", ...})
 paic_paper_plan_status(project_dir)
 ```
 
-`create` 是首次生成；存在则报 `paper_plan_already_exists`，让用户选 `update` 或删文件重做。`update` 是浅合并 patch（list / dict 字段是整体替换，不是 append——要 append 先用 status 读旧 list 再传回）。
+`create` 是首次生成；存在则报 `paper_plan_already_exists`，让用户选 `update` 或删文件重做。`experiment_id` 省略 / `None` → thesis-first 路径，LLM 把 method / evaluation 保持高层描述（不绑定 datasets / baselines / metrics）；用户跑完 `/paic-experiment` 后用 `update(patch={"experiment_id": "..."})` 绑定，或删 `paper_plan.yaml` 重 create 一次性吃进实验细节。`update` 是浅合并 patch（list / dict 字段是整体替换，不是 append——要 append 先用 status 读旧 list 再传回）。
 
 ### 用法
 
