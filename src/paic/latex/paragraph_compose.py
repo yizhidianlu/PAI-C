@@ -71,12 +71,15 @@ def outline_section(
     target_words: int,
     llm: LLMClient,
     instruction: str | None = None,
+    related_work_clusters: list[dict[str, Any]] | None = None,
 ) -> list[ParagraphSpec]:
     """Run the outline-generation LLM call.
 
     ``retrieval_hits`` is a list of ``{cite_key, title, snippet, match_reason}``
     dicts (the shape ``paic_library_retrieve`` returns). ``claims`` is a
     list of ``Claim`` dicts (the shape ``paic_claims_list`` returns).
+    ``related_work_clusters`` (§quality phase 7) is consumed when section
+    is ``02_related`` to seed one paragraph per cluster.
     """
     user_msg = _format_outline_prompt(
         section=section,
@@ -87,6 +90,7 @@ def outline_section(
         claims=claims,
         target_words=target_words,
         instruction=instruction,
+        related_work_clusters=related_work_clusters,
     )
     fields = llm.complete_json(
         system=load_prompt("paragraph_outline"),
@@ -109,6 +113,7 @@ def _format_outline_prompt(
     claims: list[dict[str, Any]],
     target_words: int,
     instruction: str | None,
+    related_work_clusters: list[dict[str, Any]] | None = None,
 ) -> str:
     parts: list[str] = [
         f"Section: {section}",
@@ -169,6 +174,24 @@ def _format_outline_prompt(
             )
     else:
         parts.append("  (no claims yet)")
+
+    if related_work_clusters and section == "02_related":
+        parts.append("")
+        parts.append(
+            "Related-work clusters (§quality phase 7) — produce ONE paragraph "
+            "per cluster, in the order listed, with the cluster's "
+            "contrast_to_proposed as that paragraph's intent:"
+        )
+        for cluster in related_work_clusters:
+            cid = cluster.get("id", "?")
+            label = cluster.get("label", "")
+            axis = cluster.get("axis", "")
+            members = cluster.get("members", [])
+            contrast = cluster.get("contrast_to_proposed", "")
+            parts.append(
+                f"  - [{cid}] '{label}' (axis={axis}, members={members}) — "
+                f"contrast: {contrast}"
+            )
 
     return "\n".join(parts)
 
@@ -336,6 +359,7 @@ def compose_section_paragraphs(
     llm: LLMClient,
     instruction: str | None = None,
     skip_polish: bool = False,
+    related_work_clusters: list[dict[str, Any]] | None = None,
 ) -> ParagraphComposeResult:
     """Run the full paragraph-mode pipeline. Used by ``compose_section`` when
     ``mode="paragraph"``."""
@@ -349,6 +373,7 @@ def compose_section_paragraphs(
         target_words=target_words,
         llm=llm,
         instruction=instruction,
+        related_work_clusters=related_work_clusters,
     )
     paragraphs: list[str] = []
     for spec in specs:

@@ -399,6 +399,7 @@ def compose_section(
         # §quality phase 6 — outline → write → polish pipeline.
         from paic.latex.paragraph_compose import compose_section_paragraphs
         from paic.library.claims import load_ledger
+        from paic.library.clustering import load_related_work_plan
         from paic.library.retrieval import LibraryRetriever, build_query
         retriever = LibraryRetriever.build(paths)
         retrieval_hits: list[dict[str, Any]] = []
@@ -423,6 +424,12 @@ def compose_section(
                 ]
         ledger = load_ledger(paths)
         claims_dump = [c.model_dump(mode="json") for c in ledger.claims]
+        # §quality phase 7 — load related-work clusters when composing 02_related.
+        clusters_dump: list[dict[str, Any]] | None = None
+        if section_name == "02_related":
+            rw_plan = load_related_work_plan(paths)
+            if rw_plan.clusters:
+                clusters_dump = [c.model_dump(mode="json") for c in rw_plan.clusters]
         try:
             result = compose_section_paragraphs(
                 section=section_name,
@@ -434,6 +441,7 @@ def compose_section(
                 target_words=(target_words or _DEFAULT_TARGET_WORDS.get(section_name, 800)),
                 llm=llm,
                 instruction=instruction,
+                related_work_clusters=clusters_dump,
             )
         except Exception as exc:
             from paic.llm.backends.base import LLMUnavailable

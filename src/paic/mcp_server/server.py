@@ -22,6 +22,7 @@ from paic.mcp_server.tools import library as library_tools
 from paic.mcp_server.tools import library_retrieve as library_retrieve_tools
 from paic.mcp_server.tools import pacing as pacing_tools
 from paic.mcp_server.tools import paper_plan as paper_plan_tools
+from paic.mcp_server.tools import related_work as related_work_tools
 from paic.mcp_server.tools import review as review_tools
 from paic.mcp_server.tools import runs as runs_tools
 from paic.mcp_server.tools import search_recall as search_recall_tools
@@ -351,6 +352,31 @@ def paic_claims_list(
     """Read ``claims.yaml``. Optional ``status_filter`` (``supported`` /
     ``needs_evidence`` / ``todo`` / ``rejected``) narrows the result."""
     return claims_tools.claims_list_tool(project_dir, status_filter=status_filter)
+
+
+# --- Related-work clustering tools (§quality phase 7) ----------------------
+
+@mcp.tool()
+def paic_related_work_cluster(project_dir: str) -> dict[str, Any]:
+    """Cluster the project library into 3-5 related-work groups.
+
+    Single LLM call that groups papers by method / dataset / task /
+    limitation / contribution_type. Each cluster gets a label, members
+    (cite_keys), and a one- to two-sentence ``contrast_to_proposed``
+    statement that drives the related-work paragraph.
+
+    Persists to ``<project>/.paic/plans/related_work_clusters.yaml``.
+    Used by paragraph-mode compose (phase 6) when section is
+    ``02_related`` — each cluster becomes one paragraph with an explicit
+    contrast point instead of a flat list of citations.
+    """
+    return related_work_tools.related_work_cluster_tool(project_dir)
+
+
+@mcp.tool()
+def paic_related_work_status(project_dir: str) -> dict[str, Any]:
+    """Read the existing related-work clusters; report ``exists=False`` otherwise."""
+    return related_work_tools.related_work_status_tool(project_dir)
 
 
 @mcp.tool()
