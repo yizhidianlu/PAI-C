@@ -18,6 +18,7 @@ from paic.mcp_server.tools import experiment as experiment_tools
 from paic.mcp_server.tools import figure as figure_tools
 from paic.mcp_server.tools import ideate as ideate_tools
 from paic.mcp_server.tools import library as library_tools
+from paic.mcp_server.tools import library_retrieve as library_retrieve_tools
 from paic.mcp_server.tools import pacing as pacing_tools
 from paic.mcp_server.tools import paper_plan as paper_plan_tools
 from paic.mcp_server.tools import review as review_tools
@@ -237,6 +238,52 @@ def paic_paper_plan_status(project_dir: str) -> dict[str, Any]:
     before applying edits.
     """
     return paper_plan_tools.paper_plan_status_tool(project_dir)
+
+
+@mcp.tool()
+def paic_library_retrieve(
+    project_dir: str,
+    query: str | None = None,
+    section: str | None = None,
+    idea_id: str | None = None,
+    experiment_id: str | None = None,
+    extra: str | None = None,
+    k: int = 12,
+    mmr_lambda: float = 0.7,
+) -> dict[str, Any]:
+    """Retrieve top-``k`` library papers ranked by BM25, MMR-reranked for diversity (§quality phase 2).
+
+    Replaces the legacy "first-N papers from selected.yaml insertion order"
+    behavior with section-aware ranking. Two ways to call:
+
+    - **Explicit query**: pass ``query`` directly. Useful when the SKILL has
+      already composed a question.
+    - **Section-targeted** (recommended for compose / review): pass
+      ``section`` (canonical name like ``"01_intro"`` or ``"04_experiments"``)
+      and optional ``idea_id`` / ``experiment_id``. The tool reads
+      ``paper_plan.yaml``, the idea, and the experiment to build a
+      section-aware query that combines the paper thesis, this section's
+      intent, key terminology, and (for method / experiments sections)
+      the proposed method + baselines + datasets + metrics.
+
+    Returns ``{query, library_size, k, hits}`` where each hit has
+    ``cite_key``, ``score``, ``match_reason`` (the query tokens that
+    matched), ``snippet``, plus title / year / authors for rendering.
+
+    ``mmr_lambda`` (default 0.7) trades off relevance against diversity:
+    1.0 is pure BM25, 0.0 is pure diversity, 0.7 keeps BM25-leaning while
+    avoiding duplicate papers from the same author/method family.
+    """
+    return library_retrieve_tools.library_retrieve_tool(
+        project_dir,
+        query=query,
+        section=section,
+        idea_id=idea_id,
+        experiment_id=experiment_id,
+        extra=extra,
+        k=k,
+        mmr_lambda=mmr_lambda,
+    )
 
 
 @mcp.tool()

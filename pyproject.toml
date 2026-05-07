@@ -21,6 +21,7 @@ dependencies = [
     "click>=8.1.0",
     "python-ulid>=2.7.0",
     "rapidfuzz>=3.9.0",
+    "rank-bm25>=0.2.2",
     "platformdirs>=4.2.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",

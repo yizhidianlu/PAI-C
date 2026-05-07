@@ -73,19 +73,65 @@ def _summary_one_liner(summary_md_path: Path | None, abstract: str | None) -> st
     return "(no summary)"
 
 
-def _build_library_context(paths: ProjectPaths) -> tuple[str, set[str]]:
+def _build_library_context(
+    paths: ProjectPaths,
+    *,
+    section_name: str | None = None,
+    paper_plan: dict[str, Any] | None = None,
+    idea: dict[str, Any] | None = None,
+    experiment: dict[str, Any] | None = None,
+) -> tuple[str, set[str], bool]:
     """Build the markdown bullet list + the cite_key whitelist for the prompt.
 
-    Returns ``(markdown_text, cite_key_set)``. ``markdown_text`` is empty
-    when the library is empty.
+    Returns ``(markdown_text, cite_key_set, retrieval_used)``. ``markdown_text``
+    is empty when the library is empty.
+
+    When the library exceeds ``MAX_LIBRARY_PAPERS_IN_PROMPT`` and a
+    ``section_name`` is given, switches to BM25 retrieval (§quality phase 2)
+    so the prompt picks the most relevant ``MAX_LIBRARY_PAPERS_IN_PROMPT``
+    papers for that section instead of the first N from insertion order.
+    The ``cite_key`` whitelist always includes the **entire** library — the
+    LLM may still cite anything in the project, the bullet list just
+    surfaces the most relevant subset.
     """
     selected = load_yaml(paths.selected_yaml) or {}
     papers = list(selected.get("papers") or []) if isinstance(selected, dict) else []
     if not papers:
-        return ("", set())
+        return ("", set(), False)
 
-    # Cap by insertion order — users can re-rank by editing selected.yaml.
-    capped = papers[:MAX_LIBRARY_PAPERS_IN_PROMPT]
+    # Whitelist always covers every library paper — retrieval only shapes
+    # the bullet list shown in the prompt.
+    full_cite_keys: set[str] = {_cite_key(p) for p in papers}
+
+    retrieval_used = False
+    capped: list[dict[str, Any]]
+    if (
+        section_name
+        and len(papers) > MAX_LIBRARY_PAPERS_IN_PROMPT
+    ):
+        try:
+            from paic.library.retrieval import LibraryRetriever, build_query
+            retriever = LibraryRetriever.build(paths)
+            query = build_query(
+                section_name,
+                paper_plan=paper_plan,
+                idea=idea,
+                experiment=experiment,
+            )
+            if query and len(retriever) > 0:
+                hits = retriever.retrieve(query, k=MAX_LIBRARY_PAPERS_IN_PROMPT)
+                if hits:
+                    capped = [h.paper for h in hits]
+                    retrieval_used = True
+                else:
+                    capped = papers[:MAX_LIBRARY_PAPERS_IN_PROMPT]
+            else:
+                capped = papers[:MAX_LIBRARY_PAPERS_IN_PROMPT]
+        except Exception:  # noqa: BLE001 — fall back to legacy behavior on any retrieval failure
+            capped = papers[:MAX_LIBRARY_PAPERS_IN_PROMPT]
+    else:
+        # Cap by insertion order — users can re-rank by editing selected.yaml.
+        capped = papers[:MAX_LIBRARY_PAPERS_IN_PROMPT]
 
     cite_keys: set[str] = set()
     bullets: list[str] = []
@@ -119,11 +165,19 @@ def _build_library_context(paths: ProjectPaths) -> tuple[str, set[str]]:
 
     overflow_note = ""
     if len(papers) > MAX_LIBRARY_PAPERS_IN_PROMPT:
-        overflow_note = (
-            f"\n(NOTE: {len(papers)} papers in library; only the first "
-            f"{MAX_LIBRARY_PAPERS_IN_PROMPT} are listed here.)"
-        )
-    return ("\n".join(bullets) + overflow_note, cite_keys)
+        if retrieval_used:
+            overflow_note = (
+                f"\n(NOTE: {len(papers)} papers in library; the {MAX_LIBRARY_PAPERS_IN_PROMPT} "
+                f"most relevant for this section are listed — others remain citable.)"
+            )
+        else:
+            overflow_note = (
+                f"\n(NOTE: {len(papers)} papers in library; only the first "
+                f"{MAX_LIBRARY_PAPERS_IN_PROMPT} are listed here.)"
+            )
+    # Whitelist returned to caller is the **full** library so the cite_key
+    # validator doesn't reject papers outside the bullet list.
+    return ("\n".join(bullets) + overflow_note, full_cite_keys, retrieval_used)
 
 
 def _format_paper_plan(plan: dict[str, Any], section_name: str) -> str:
@@ -298,7 +352,13 @@ def compose_section(
         if isinstance(loaded, dict):
             paper_plan = loaded
 
-    library_md, library_keys = _build_library_context(paths)
+    library_md, library_keys, retrieval_used = _build_library_context(
+        paths,
+        section_name=section_name,
+        paper_plan=paper_plan,
+        idea=idea,
+        experiment=experiment,
+    )
 
     # Abstract / conclusion typically have no cites — empty library is OK.
     # Other sections benefit from at least a few; warn but don't abort.
@@ -389,6 +449,7 @@ def compose_section(
         "validation": report.to_dict(),
         "library_size": library_size,
         "paper_plan_used": paper_plan is not None,
+        "retrieval_used": retrieval_used,
         "wrote": False,
         "backup_path": None,
     }
@@ -439,7 +500,7 @@ def persist_composed(
             ),
         }
 
-    _, library_keys = _build_library_context(paths)
+    _, library_keys, _ = _build_library_context(paths)
     composed_clean = strip_markdown_fence(composed).strip() + "\n"
     report = validate_composed(composed_clean, library_keys)
     if not report.ok:

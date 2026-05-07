@@ -345,7 +345,18 @@ def draft_compose_tool(
         if experiment_id and (paths.experiments_dir / f"{experiment_id}.yaml").is_file():
             experiment = load_yaml(paths.experiments_dir / f"{experiment_id}.yaml")
 
-        library_md, library_keys = _build_library_context(paths)
+        paper_plan: dict | None = None
+        if paths.paper_plan_yaml.is_file():
+            loaded = load_yaml(paths.paper_plan_yaml)
+            if isinstance(loaded, dict):
+                paper_plan = loaded
+        library_md, library_keys, _ = _build_library_context(
+            paths,
+            section_name=section_name,
+            paper_plan=paper_plan,
+            idea=idea,
+            experiment=experiment,
+        )
         if not library_keys and section_name in {"01_intro", "02_related", "04_experiments"}:
             return {
                 "error": "empty_library",
@@ -373,6 +384,7 @@ def draft_compose_tool(
                 idea=idea,
                 experiment=experiment,
                 library_md=library_md,
+                paper_plan=paper_plan,
             ),
             "next_tool": "mcp__paic__paic_draft_compose_persist",
             "instructions": _COMPOSE_HOST_INSTRUCTIONS,

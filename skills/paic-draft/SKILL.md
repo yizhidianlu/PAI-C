@@ -1,7 +1,7 @@
 ---
 name: paic-draft
 description: LaTeX writing — v0.1 fills a venue template (built-in cvpr/neurips/ieee, or any project-local template under .paic/templates/); v0.2 polishes individual sections via LLM rewrite (tighten / clarify / formalize / expand / proofread); v0.3 composes full sections from idea + experiment + library with auto citation alignment. Optionally syncs the resulting drafts/ tree bidirectionally with an Overleaf-linked Dropbox folder. Use when the user says "起 LaTeX 骨架" / "draft the paper" / "改一下 intro" / "compose 一段 related work".
-allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_draft_sync_overleaf, mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_status
+allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_draft_sync_overleaf, mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_status, mcp__paic__paic_library_retrieve
 ---
 
 # /paic-draft — LaTeX writing
@@ -164,6 +164,7 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
    - 一行：「✓ compose 完成: drafts/sections/02_related.tex（mode=from_stub, section=related）」
    - **引用统计**：「使用了 N 个 cite (`arxiv_xxx`, `doi_yyy`, ...)（从 library 共 M 篇里挑选）」
    - **paper_plan**：根据 `out["paper_plan_used"]` 报告「✓ 已注入 paper_plan 全局上下文」或「⚠ paper_plan 缺失 — compose 仅依赖 idea + experiment」
+   - **retrieval**：根据 `out["retrieval_used"]` 报告「✓ library 超过 40 篇，已用 BM25 按 section 检索 top-40」或在 ≤40 篇时静默
    - 备份位置
    - **diff 块**：把 `out["diff"]` 截断到前 30 行展示。
    - validation warnings（如有）。
