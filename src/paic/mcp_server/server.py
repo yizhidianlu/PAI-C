@@ -21,6 +21,7 @@ from paic.mcp_server.tools import library as library_tools
 from paic.mcp_server.tools import pacing as pacing_tools
 from paic.mcp_server.tools import review as review_tools
 from paic.mcp_server.tools import runs as runs_tools
+from paic.mcp_server.tools import search_recall as search_recall_tools
 from paic.mcp_server.tools import strategy as strategy_tools
 from paic.mcp_server.tools import summarize as summarize_tools
 from paic.mcp_server.tools import workspace as workspace_tools
@@ -130,6 +131,45 @@ def paic_dedupe(papers: list[dict[str, Any]]) -> dict[str, Any]:
     where each group lists indices in the input that collapsed together.
     """
     return library_tools.dedupe_tool(papers)
+
+
+@mcp.tool()
+def paic_search_recall_check(
+    papers: list[dict[str, Any]],
+    core_terms: list[str],
+    tier1_min: int = 5,
+    match_mode: str = "loose",
+) -> dict[str, Any]:
+    """Bucket deduped papers into 4 title-hit tiers for /paic-search rendering.
+
+    Use this **after** ``paic_dedupe`` and **before** rendering the final
+    table in /paic-search. It enforces a deterministic must-include tier so
+    papers whose titles explicitly contain the user's core query terms
+    aren't silently dropped by attention-based selection.
+
+    Args:
+        papers: deduped list of paper records (PaperRef-shape dicts; the
+            same shape ``paic_dedupe`` returns under ``unique``).
+        core_terms: 2-4 English noun phrases the LLM extracted from the
+            original topic + selected query variants. Multi-word terms
+            (e.g. ``"motor imagery"``) are matched as contiguous phrases.
+        tier1_min: floor on ``len(tier1_strict) + len(tier1_loose)``;
+            highest-hit T2 papers are promoted into T1_loose to meet it.
+            Default 5.
+        match_mode: ``"strict"`` requires all core_terms present;
+            ``"loose"`` (default) also accepts hits >= N-1 when N >= 3.
+
+    Returns ``{core_terms_normalized, tier1_strict, tier1_loose,
+    tier2_partial, tier3_others, stats}``. Each tier is a list of
+    ``{idx, hits}`` where ``idx`` indexes into the input ``papers`` and
+    ``hits`` is the subset of normalized terms that matched.
+    """
+    return search_recall_tools.search_recall_check_tool(
+        papers,
+        core_terms,
+        tier1_min=tier1_min,
+        match_mode=match_mode,
+    )
 
 
 @mcp.tool()

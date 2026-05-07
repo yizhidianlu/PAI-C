@@ -1,7 +1,7 @@
 ---
 name: paic-search
 description: Multi-source paper search. Default flow covers arXiv (mcp__arxiv__*) + Semantic Scholar (mcp__paic__paic_s2_search). When the user has multi-platform search enabled in ~/.paic/config.yaml, also fans out to PubMed / bioRxiv / OpenAlex / Crossref / IEEE etc. via paper-search-mcp. Use when the user asks to "find papers about X", "search for related work on Y", or "扩充文献综述".
-allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_search_strategy, mcp__paic__paic_search_pace, mcp__paic__paic_arxiv_pace, mcp__paic__paic_s2_search, mcp__paic__paic_dedupe, mcp__arxiv__search_papers, mcp__arxiv__semantic_search, mcp__paper_search__search_pubmed, mcp__paper_search__search_biorxiv, mcp__paper_search__search_medrxiv, mcp__paper_search__search_pmc, mcp__paper_search__search_europepmc, mcp__paper_search__search_crossref, mcp__paper_search__search_openalex, mcp__paper_search__search_core, mcp__paper_search__search_dblp, mcp__paper_search__search_doaj, mcp__paper_search__search_openaire, mcp__paper_search__search_zenodo, mcp__paper_search__search_hal, mcp__paper_search__search_ssrn, mcp__paper_search__search_google_scholar, mcp__paper_search__search_iacr, mcp__paper_search__search_citeseerx, mcp__paper_search__search_base, mcp__paper_search__search_unpaywall, mcp__paper_search__search_ieee, mcp__paper_search__search_acm, mcp__paper_search__read_ieee_paper, mcp__paper_search__read_acm_paper
+allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_search_strategy, mcp__paic__paic_search_pace, mcp__paic__paic_arxiv_pace, mcp__paic__paic_s2_search, mcp__paic__paic_dedupe, mcp__paic__paic_search_recall_check, mcp__arxiv__search_papers, mcp__arxiv__semantic_search, mcp__paper_search__search_pubmed, mcp__paper_search__search_biorxiv, mcp__paper_search__search_medrxiv, mcp__paper_search__search_pmc, mcp__paper_search__search_europepmc, mcp__paper_search__search_crossref, mcp__paper_search__search_openalex, mcp__paper_search__search_core, mcp__paper_search__search_dblp, mcp__paper_search__search_doaj, mcp__paper_search__search_openaire, mcp__paper_search__search_zenodo, mcp__paper_search__search_hal, mcp__paper_search__search_ssrn, mcp__paper_search__search_google_scholar, mcp__paper_search__search_iacr, mcp__paper_search__search_citeseerx, mcp__paper_search__search_base, mcp__paper_search__search_unpaywall, mcp__paper_search__search_ieee, mcp__paper_search__search_acm, mcp__paper_search__read_ieee_paper, mcp__paper_search__read_acm_paper
 ---
 
 # /paic-search — multi-source paper retrieval
@@ -156,16 +156,53 @@ allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_search_strategy
 
 6. Call `mcp__paic__paic_dedupe(papers=all_results)`. 一次 dedupe 同时跨 query 跨 platform。dedupe 合并 duplicate group 时，把多个 `matched_query` 合成 list（如 `["#1", "#3"]`）。DOI / arxiv_id / s2_id / fuzzy title 已经覆盖大多数重叠情形。
 
-7. Optional: if the user already has papers in their library and asks "扩展现有文献", also call `mcp__arxiv__semantic_search(query=<#1>)` against the local index for tighter relevance.
+7. **强制召回校验（Step 6.5 — 不可跳过）**
 
-8. Render a Chinese-headed markdown table of the unique results:
+   dedupe 后**必须**跑这一步再渲染表格。目的：避免标题里明确含核心检索词的论文被注意力筛掉。
+
+   7a. 从 `<原始 topic> + <selected_queries>` 提取 **2-4 个 `core_terms`**（英文短语）：
+   - 中文 topic 先翻成主流英文术语（如 "脑机接口" → `brain-computer interface` 或 `BCI`）
+   - 保留：实词名词短语 / 方法名 / 数据集名 / 缩略词（如 `motor imagery` / `EEG` / `channel selection`）
+   - **剔除**通用词：`method` / `model` / `approach` / `based on` / `using` / `survey` / `framework` / `efficient` / `2024`
+   - 多词短语保留为单个 term（用空格分隔），不要拆词
+
+   7b. 中文一行印出 core_terms 让用户**可选**修正（无回应直接继续）：
+   ```
+   核心词（自动提取，title 强制召回用）: ["motor imagery", "EEG", "channel selection"]
+   要修改回 "core_terms: A, B, C"，否则继续。
+   ```
+
+   7c. 调 `mcp__paic__paic_search_recall_check(papers=<deduped.unique>, core_terms=<final_list>)`，拿到四桶 idx 列表 + 每篇 `hits`。
+   - 默认 `match_mode="loose"`、`tier1_min=5`，正常无需覆盖
+   - 用户给的 core_terms ≤ 2 个时，loose 自动等价 strict（工具内部处理）
+
+8. Optional: if the user already has papers in their library and asks "扩展现有文献", also call `mcp__arxiv__semantic_search(query=<#1>)` against the local index for tighter relevance.
+
+9. Render a Chinese-headed markdown **分两段**表格——**严格按 step 7c 的桶分配**，不要凭注意力重排：
+
+   **段 A · 强相关·标题命中核心词**（合并 `tier1_strict` + `tier1_loose`，前者在前）：
+   ```
+   ## 强相关 · 标题命中核心词（{N1} 篇）
+   | 序号 | 标题 | 作者 | 年份 | 来源 | id | 命中词 |
+   ```
+
+   **段 B · 其他召回·部分命中或仅 abstract 相关**（合并 `tier2_partial` + `tier3_others`）：
+   ```
+   ## 其他召回（{N2} 篇）
+   | 序号 | 标题 | 作者 | 年份 | 来源 | id | 命中词 |
+   ```
+
+   两表共用列约定：
    - 序号 / 标题 / 作者(前两位) / 年份 / venue / 来源 / id
    - **来源** column: shows `arxiv` / `s2` / `pubmed` / `biorxiv` / `openalex` / etc. (use `platform` if set, else `source`).
-   - **命中 query** column（仅当 `len(selected_queries) > 1` 时）：列出该篇被哪些 query 命中（如 `#1, #3` 或 `#1, custom`）。
-   - id 列 prefer arxiv_id, then doi, then s2_id, then external_ids (e.g. PMID).
-   - 用 `*cached*` 后缀标注 from_cache 命中。
+   - **命中词** column：渲染该篇 `hits` 字段（如 `motor imagery, EEG`）；空 = 段 B 才出现的零命中
+   - **命中 query** column（仅当 `len(selected_queries) > 1` 时增加）：列出该篇被哪些 query 命中（如 `#1, #3` 或 `#1, custom`）
+   - id 列 prefer arxiv_id, then doi, then s2_id, then external_ids (e.g. PMID)
+   - 用 `*cached*` 后缀标注 from_cache 命中
 
-9. End with a one-line Chinese suggestion: "如要纳入项目，运行 `/paic-ingest <序号或id>`"。
+   段 A **每一篇**必须出现，不可省略。段 B 可在 N2 ≥ 30 时折叠保留前 30（按命中数降序），并加一行 "其他 K 篇 0 命中已折叠"。
+
+10. End with a one-line Chinese suggestion: "如要纳入项目，运行 `/paic-ingest <序号或id>`"。
    - 如果用了多个 query，加一行小结："本次 #1 命中 N 篇、#3 命中 M 篇，去重后 K 篇唯一"。
    - If multi-platform mode contributed unique papers from new sources, a brief sentence highlighting which platforms helped (e.g. "本次 PubMed 贡献了 4 篇 arXiv 上没有的临床研究") is welcome but optional.
 
@@ -188,5 +225,6 @@ allowed-tools: mcp__paic__paic_workspace_status, mcp__paic__paic_search_strategy
 
 ## 已知陷阱
 - **biorxiv/medrxiv 的 query 语义错配**：上游 `api.biorxiv.org/details/` endpoint **不是 full-text search**——只按 category + 30 天时间窗过滤。把通用 query 传进去 = 召回近零。Step 3.b.i 强制 category 映射或 skip，避免无谓 fan-out。其它 paper-search-mcp 平台（pubmed / openalex / crossref / europepmc）都是真正的 full-text search，query 直传即可。
+- **dedupe 之后凭注意力筛 paper**：把 `paic_dedupe.unique` 直接交给 LLM 渲染表格 → 召回池超过 ~50 篇时，LLM 倾向悄悄略过尾部；标题里明确含核心检索词的论文也会因为不在 attention 焦点内被漏掉。**Step 7（强制召回校验）不可跳过**：必须调 `paic_search_recall_check`，按返回的 4 桶 idx 渲染分两段表格。SKILL 的纪律不能保证 → 工具的确定性返回值才能保证。
 - **biorxiv 的近期窗口偏窄**：上游默认只看最近 30 天预印本。要找历史工作（>30 天前）biorxiv 是错的工具——用 pubmed / europepmc / openalex 走 DOI 索引。
 - **同主题在 biorxiv 和 medrxiv 都跑一遍意义有限**：biorxiv = 基础生命科学预印本；medrxiv = 临床医学预印本。EEG / fMRI 偏 neuroscience 走 biorxiv；RCT / 临床流行病走 medrxiv。混跑只是徒增 fan-out 时间。

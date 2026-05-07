@@ -36,6 +36,7 @@
   - `mcp__arxiv__search_papers` + `mcp__arxiv__semantic_search`（arXiv）
   - `mcp__paic__paic_s2_search`（Semantic Scholar；客户端 0.95 req/s 限速）
 - **去重**：DOI / arxiv_id 主键 + 标题 fuzzy（threshold 0.92）
+- **强制召回校验**（dedupe 之后、渲染表格之前）：Skill 从 topic + 选用的 query 变体里抽 2-4 个 `core_terms`（英文短语），调 `paic_search_recall_check` 把召回池按 title 命中数分四桶（`tier1_strict` / `tier1_loose` / `tier2_partial` / `tier3_others`）。最终表格分两段渲染——「强相关·标题命中核心词」和「其他召回」——避免长召回池里标题明确含核心词的论文被注意力筛掉。`tier1_min=5` 兜底：T1 不足时从 T2 按命中数降序补到下限。
 - **产出**：返回候选表（不落盘；`/paic-ingest` 才入库）
 - **耗时**：5–15 秒，取决于 query 复杂度
 - **缓存**：S2 响应缓存到 `~/.paic/cache/s2/<sha>.json`，永不过期；绕过缓存传 `force=true`
