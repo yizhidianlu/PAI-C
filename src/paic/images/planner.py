@@ -33,9 +33,13 @@ class FigureSlot:
     scene_description: str
     caption_hint: str
     rationale: str
+    # §quality phase 9 — claim-driven figure planning. Defaults preserve
+    # backward compatibility with pre-phase-9 plans on disk.
+    supporting_claims: tuple[str, ...] = ()
+    no_visual_reason: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "slot": self.slot,
             "kind": self.kind,
             "section_hint": self.section_hint,
@@ -43,7 +47,11 @@ class FigureSlot:
             "scene_description": self.scene_description,
             "caption_hint": self.caption_hint,
             "rationale": self.rationale,
+            "supporting_claims": list(self.supporting_claims),
         }
+        if self.no_visual_reason:
+            d["no_visual_reason"] = self.no_visual_reason
+        return d
 
 
 class _FigureSlotOut(BaseModel):
@@ -54,6 +62,8 @@ class _FigureSlotOut(BaseModel):
     scene_description: str
     caption_hint: str = ""
     rationale: str = ""
+    supporting_claims: list[str] = Field(default_factory=list)
+    no_visual_reason: str | None = None
 
 
 class _FigurePlanOutput(BaseModel):
@@ -77,6 +87,48 @@ def _ensure_unique(slots: list[_FigureSlotOut]) -> list[_FigureSlotOut]:
             slug = f"{slug}_{n + 1}"
         out.append(s.model_copy(update={"slot": slug}))
     return out
+
+
+def _gather_claim_context(paths: ProjectPaths) -> str:
+    """§quality phase 9 — surface the claim ledger so the planner can bind
+    each figure slot to the contributions / claims it supports."""
+    if not paths.claims_yaml.is_file():
+        return ""
+    raw = load_yaml(paths.claims_yaml, default={}) or {}
+    if not isinstance(raw, dict):
+        return ""
+    claims = raw.get("claims") or []
+    if not claims:
+        return ""
+    lines = ["=== CLAIM LEDGER (bind figure slots to these claim ids when applicable) ==="]
+    for c in claims[:25]:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("id", "?")
+        ctype = c.get("type", "?")
+        text = (c.get("text") or "")[:160]
+        lines.append(f"- [{cid}] ({ctype}): {text}")
+    return "\n".join(lines)
+
+
+def _gather_paper_plan_context(paths: ProjectPaths) -> str:
+    """§quality phase 9 — surface contributions so the planner ensures every
+    contribution has at least one figure / table / algorithm or a stated
+    no_visual_reason."""
+    if not paths.paper_plan_yaml.is_file():
+        return ""
+    raw = load_yaml(paths.paper_plan_yaml, default={}) or {}
+    if not isinstance(raw, dict):
+        return ""
+    contribs = raw.get("contributions") or []
+    if not contribs:
+        return ""
+    lines = ["=== PAPER CONTRIBUTIONS (each MUST have >=1 figure / table / algorithm or no_visual_reason) ==="]
+    for c in contribs:
+        if not isinstance(c, dict):
+            continue
+        lines.append(f"- [{c.get('id', '?')}] {c.get('title', '')}: {c.get('description', '')}")
+    return "\n".join(lines)
 
 
 def _gather_paper_context(
@@ -140,7 +192,14 @@ def plan_figures(
 ) -> list[FigureSlot]:
     """Run the planner LLM call and return validated FigureSlot list."""
     system = load_prompt("figure_plan")
-    body = _gather_paper_context(paths, draft_path)
+    body_parts = [_gather_paper_context(paths, draft_path)]
+    plan_ctx = _gather_paper_plan_context(paths)
+    if plan_ctx:
+        body_parts.append(plan_ctx)
+    claims_ctx = _gather_claim_context(paths)
+    if claims_ctx:
+        body_parts.append(claims_ctx)
+    body = "\n\n".join(p for p in body_parts if p)
     user = (
         f"max_figures: {max_figures}\n\n"
         f"PAPER CONTEXT:\n{body}\n\n"
@@ -165,6 +224,80 @@ def plan_figures(
             scene_description=s.scene_description,
             caption_hint=s.caption_hint,
             rationale=s.rationale,
+            supporting_claims=tuple(s.supporting_claims),
+            no_visual_reason=s.no_visual_reason,
         )
         for s in deduped
     ]
+
+
+def verify_claim_coverage(
+    paths: ProjectPaths,
+    slots: list[FigureSlot],
+) -> list[str]:
+    """§quality phase 9 — return one warning per contribution claim that
+    has no figure binding and no explicit no_visual_reason. Returns empty
+    list when paper_plan is missing (then there's nothing to bind)."""
+    warnings: list[str] = []
+    if not paths.paper_plan_yaml.is_file():
+        return warnings
+    raw = load_yaml(paths.paper_plan_yaml, default={}) or {}
+    if not isinstance(raw, dict):
+        return warnings
+    contribs = raw.get("contributions") or []
+    if not contribs:
+        return warnings
+
+    # If a paper plan also lists figure_plan items with explicit
+    # no_visual_reason, those contributions are "intentionally no-figure".
+    plan_no_visual: dict[str, str] = {}
+    for fp in (raw.get("figure_plan") or []):
+        if not isinstance(fp, dict):
+            continue
+        if fp.get("no_visual_reason"):
+            for cl in fp.get("supporting_claims") or []:
+                plan_no_visual[cl] = fp.get("no_visual_reason", "")
+
+    # Build {contribution_id -> claim_ids}: scan claims.yaml.
+    claims_by_contrib: dict[str, list[str]] = {}
+    if paths.claims_yaml.is_file():
+        claims_raw = load_yaml(paths.claims_yaml, default={}) or {}
+        if isinstance(claims_raw, dict):
+            for c in (claims_raw.get("claims") or []):
+                if not isinstance(c, dict):
+                    continue
+                cid = c.get("contribution_id")
+                if cid:
+                    claims_by_contrib.setdefault(cid, []).append(c.get("id", ""))
+
+    # Set of claim_ids that any slot supports (or that have no_visual_reason).
+    supported: set[str] = set()
+    for slot in slots:
+        if slot.no_visual_reason:
+            for cl in slot.supporting_claims:
+                supported.add(cl)
+        else:
+            for cl in slot.supporting_claims:
+                supported.add(cl)
+    supported.update(plan_no_visual.keys())
+
+    for c in contribs:
+        if not isinstance(c, dict):
+            continue
+        contrib_id = c.get("id")
+        title = c.get("title", "?")
+        if not contrib_id:
+            continue
+        # The contribution is "covered" if any of its claims (or the
+        # contribution id itself, when claim ledger is empty) is in supported.
+        ledger_ids = claims_by_contrib.get(contrib_id, [])
+        coverage_keys = set(ledger_ids) | {contrib_id}
+        if coverage_keys & supported:
+            continue
+        warnings.append(
+            f"contribution_uncovered: contribution '{contrib_id}' ({title}) has no "
+            "figure / table / algorithm binding and no explicit no_visual_reason. "
+            "Add a slot with supporting_claims=['{cid}'] or a paper_plan figure entry "
+            "with no_visual_reason set.".format(cid=contrib_id)
+        )
+    return warnings

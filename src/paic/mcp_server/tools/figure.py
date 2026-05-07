@@ -142,11 +142,17 @@ def figure_plan(
     except Exception as exc:  # noqa: BLE001 — bubble LLM/router errors as structured
         return {"error": "plan_failed", "detail": repr(exc)}
 
+    # §quality phase 9 — verify every contribution claim has a figure /
+    # table / algorithm binding (or an explicit no_visual_reason).
+    from paic.images.planner import verify_claim_coverage
+    coverage_warnings = verify_claim_coverage(paths, slots)
+
     plan_payload = {
         "plan_id": str(ULID()),
         "draft_path": str(draft_p) if draft_p else None,
         "created_at": datetime.now(UTC).isoformat(),
         "slots": [s.to_dict() for s in slots],
+        "coverage_warnings": coverage_warnings,
     }
     paths.figures_dir.mkdir(parents=True, exist_ok=True)
     save_yaml(plan_file, plan_payload)
@@ -155,6 +161,7 @@ def figure_plan(
         "plan_path": str(plan_file),
         "slot_count": len(slots),
         "slots": plan_payload["slots"],
+        "coverage_warnings": coverage_warnings,
     }
 
 

@@ -25,7 +25,14 @@ allowed-tools: mcp__paic__paic_figure_plan, mcp__paic__paic_figure_generate, mcp
        内容: <scene_description>
        caption: <caption_hint>
        理由: <rationale>
+       绑定 claims: <supporting_claims>（§quality phase 9）
+       no_visual_reason: <reason 或 缺省>
      ```
+   - **§quality phase 9 — coverage 警告**：检查返回的 `coverage_warnings`。**非空**时一行一条提示：
+     ```
+     ⚠ contribution 'C2' (Empirical study) 没有 figure / table / algorithm 绑定也没填 no_visual_reason — 建议加一个 slot 把 supporting_claims=['C2'] 加上，或在 paper_plan.yaml 的 figure_plan 里加一个 no_visual_reason 条目。
+     ```
+     用户可以选：(a) 让 plan_overwrite=True 重跑、(b) 手改 `_plan.yaml` 加 supporting_claims、(c) 在 paper_plan 里加 figure_plan entry with no_visual_reason、(d) 暂时忽略。
 3. 让用户挑选要继续生成的 slot（可以全选，也可以删几条；删的话用户去改 `_plan.yaml` 或我们用 `overwrite=True` 重 plan）。
 
 ### Step 2 — 生成（每张图一次调用）

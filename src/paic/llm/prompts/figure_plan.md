@@ -35,6 +35,21 @@ Quality bar:
 - ``rationale`` is a one-sentence "why this figure helps" — keeps the
   proposal honest.
 
+§quality phase 9 — **claim binding** (when the paper context block
+includes a CLAIM LEDGER and / or PAPER CONTRIBUTIONS section):
+
+- ``supporting_claims`` lists the contribution ids and / or claim ids the
+  slot supports. Every contribution should be covered by either a slot
+  with that contribution / its claim ids in ``supporting_claims``, OR by
+  a slot whose ``no_visual_reason`` is set (theoretical-only result,
+  closed-source tool, etc).
+- Decorative slots without claim binding are fine *only* when the
+  contribution count is already satisfied. Otherwise tag the closest
+  contribution.
+- Use ``no_visual_reason`` rather than omitting a contribution silently
+  — a one-line reason ("equation-only contribution", "negative result")
+  is better than a coverage gap.
+
 Return STRICTLY a JSON object matching:
 
 ```json
@@ -47,7 +62,9 @@ Return STRICTLY a JSON object matching:
       "position_hint": "page 1, right after the abstract",
       "scene_description": "...",
       "caption_hint": "...",
-      "rationale": "..."
+      "rationale": "...",
+      "supporting_claims": ["C1", "CL2"],
+      "no_visual_reason": null
     }
   ]
 }
