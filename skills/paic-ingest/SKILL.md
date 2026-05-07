@@ -1,7 +1,7 @@
 ---
 name: paic-ingest
 description: Ingest selected papers into the project library — adds them to .paic/library/selected.yaml, downloads PDFs/markdowns via the appropriate per-platform tool (arxiv MCP for arxiv; paper-search-mcp for pubmed / biorxiv / openalex / etc.), names files as `NNN_title.<ext>` under .paic/library/pdfs/, and (optionally) syncs the batch to Zotero via zotero-mcp. Use after /paic-search when the user picks which papers to keep.
-allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic__paic_library_add, mcp__paic__paic_library_attach_paper, mcp__paic__paic_workspace_status, mcp__paic__paic_arxiv_pace, mcp__paic__paic_search_pace, mcp__paper_search__download_arxiv, mcp__paper_search__download_pubmed, mcp__paper_search__download_biorxiv, mcp__paper_search__download_medrxiv, mcp__paper_search__download_pmc, mcp__paper_search__download_openalex, mcp__paper_search__download_crossref, mcp__paper_search__download_ieee, mcp__paper_search__download_with_fallback, mcp__zotero_mcp__zotero_get_collections, mcp__zotero_mcp__zotero_create_collection, mcp__zotero_mcp__zotero_add_by_doi, mcp__zotero_mcp__zotero_add_by_url, mcp__zotero_mcp__zotero_add_from_file
+allowed-tools: Bash, Skill, mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic__paic_library_add, mcp__paic__paic_library_attach_paper, mcp__paic__paic_workspace_status, mcp__paic__paic_arxiv_pace, mcp__paic__paic_search_pace, mcp__paper_search__download_arxiv, mcp__paper_search__download_pubmed, mcp__paper_search__download_biorxiv, mcp__paper_search__download_medrxiv, mcp__paper_search__download_pmc, mcp__paper_search__download_openalex, mcp__paper_search__download_crossref, mcp__paper_search__download_ieee, mcp__paper_search__download_with_fallback, mcp__zotero_mcp__zotero_get_collections, mcp__zotero_mcp__zotero_create_collection, mcp__zotero_mcp__zotero_add_by_doi, mcp__zotero_mcp__zotero_add_by_url, mcp__zotero_mcp__zotero_add_from_file
 ---
 
 # /paic-ingest — add papers to the project library
@@ -13,6 +13,13 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 ## What you do
 
 1. If `mcp__paic__paic_workspace_status` shows uninitialized, instruct user to run `/paic-init` and stop.
+
+   **意图标记 — 是否要中文翻译**：扫一遍用户原话。同时满足下面任一条件 → 设 `translate_zh=true`，进入 step 3.5（opt-in 翻译）：
+   - 含「翻译」/「译」/「中文」/「translate」（不区分大小写）
+   - 命令行风格里出现 `--translate` / `--zh` 标志
+   - 用户明示「ingest 之后帮我翻译」/「再把这几篇翻成中文」
+
+   不命中 → `translate_zh=false`（默认）。step 3.5 整段跳过。
 
 2. Build a list of paper dicts to add. Each dict should have at least `title` plus one id (`arxiv_id` / `doi` / `s2_id`). If the user references results from a recent `/paic-search`, reuse the dicts from that turn's tool result. If they pasted bare arXiv ids, construct minimal dicts (`{arxiv_id, title}` — fetch the title via `mcp__arxiv__search_papers` if you don't have it; if you need >3 lookups, intersperse `mcp__paic__paic_arxiv_pace()` between calls).
 
@@ -74,7 +81,7 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 
    | 论文特征 | 下载工具 | Pace 工具 | 落地方式 |
    |---|---|---|---|
-   | 有 `arxiv_id`（或 `platform == "arxiv"`） | `mcp__arxiv__download_paper(paper_id=<arxiv_id>)` | `mcp__paic__paic_arxiv_pace()` | 上游写到 `~/.arxiv-mcp/papers/`；之后调 `paic_library_attach_paper(project_dir, paper, display_name=f"{display_basename}.md")` 自动 copy 一份到 `library/pdfs/<display_basename>.md` 并回写 `pdf_local_path` |
+   | 有 `arxiv_id`（或 `platform == "arxiv"`） | **两步**：(a) `mcp__arxiv__download_paper(paper_id=<arxiv_id>)` 拿 markdown；(b) **额外** Bash 跑 `python -c "import urllib.request as u; u.urlretrieve('https://arxiv.org/pdf/<arxiv_id>.pdf', r'<cwd>/.paic/library/pdfs/<display_basename>.pdf')"` 拿原始 PDF | **两次** `mcp__paic__paic_arxiv_pace()`（在 (a) 之后一次、在 (b) 之后再一次——arxiv.org 1 req/3s 限流是按调用计数的，markdown 与 PDF 是两条独立 endpoint） | (a) 上游写到 `~/.arxiv-mcp/papers/`；之后 `paic_library_attach_paper(project_dir, paper, display_name=f"{display_basename}.md")` copy markdown 到 `library/pdfs/<display_basename>.md` 并回写 `pdf_local_path = <basename>.md`。(b) PDF 直接 urllib 落到目标路径，**不需要再调 attach**（pdf_local_path 已指向 .md，summarize 优先吃 markdown 提取效果好；.pdf 是次级产物供用户阅读 / 引用）。urllib 失败（404 / 网络）→ 标 `arxiv_pdf_download_failed` 进未下载列表的 PDF 子项，markdown 部分仍有效，不阻塞流程 |
    | `platform == "pubmed"`（**注意**：`download_pubmed` 是 stub，永远返回 "not supported"；上游 NCBI 不允许程序化下 PMID 的 PDF。**不要直调** `download_pubmed`） | `mcp__paper_search__download_with_fallback(source="pubmed", paper_id=<PMID>, doi=<paper.doi 或 "">, save_path="<cwd>/.paic/library/pdfs/")` —— fallback 内部还会试 PMC OA、Unpaywall、Sci-Hub | `mcp__paic__paic_search_pace(platform="pubmed")` | save_path 是目录 + 必须 rename（见 3.2）。fallback 全链路失败标 "未下载（pubmed_no_oa）" |
    | `platform` 是 `biorxiv` / `medrxiv` / `pmc` 之一（这三个 `download_pdf` 是真实下载、不是 stub） | `mcp__paper_search__download_<platform>(paper_id=<doi 或 PMCID>, save_path="<cwd>/.paic/library/pdfs/<display_basename>.pdf")` | `mcp__paic__paic_search_pace(platform="<platform>")` | 这几个上游接受**文件形式** save_path，直接落地；**之后**调一次 `paic_library_attach_paper(project_dir, paper, source_path="<同 save_path>", display_name=f"{display_basename}.pdf")` 回写 yaml（attach 看 dest=source 已存在 → silently 跳 copy，但会写 `pdf_local_path`） |
    | `platform == "openalex"`（openalex **不托管 PDF**，但永远带 DOI；不要调 `download_openalex` / `download_with_fallback(source="openalex")`，二者都会报 `Unsupported source`） | `mcp__paper_search__download_with_fallback(source="crossref", paper_id=<paper.doi>, doi=<paper.doi>, save_path="<cwd>/.paic/library/pdfs/")` | `mcp__paic__paic_search_pace(platform="crossref")` | save_path **是目录、不是文件路径**；上游自决文件名（如 `europepmc_PMID_*.pdf` / `unpaywall_<doi>.pdf`）；**下载成功后必须 rename**（见 3.2）|
@@ -154,10 +161,69 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
    4. 第 3 次还 429 → **停下来问用户**："这一篇连续 3 次 429，是 skip 还是把 yaml 的 inter_batch_delay_sec / inter_call_delay_sec.<platform> 调到 10s 后从这篇继续？" 不要再硬撞。
    5. 成功后用一行中文告知"第 N 篇 429 撞过，多 sleep XXs 重试通过"。
 
+3.5. **（条件，仅当 step 1 设 `translate_zh=true`）逐篇调 arxiv-translator skill 把 LaTeX 源码译为中文 PDF**
+
+   **本步只对 arxiv 论文有效**——arxiv-translator 只支持 LaTeX 源码，pubmed/biorxiv/openalex 等平台没有 LaTeX 源，本批里这些论文整段 skip。
+
+   **3.5.0 install 检测（每次跑前一次）**：
+   - 用 Bash 检查：
+     ```bash
+     test -f "$HOME/.claude/skills/arxiv-translator/SKILL.md" && echo OK || echo MISSING
+     ```
+     PowerShell 等价：
+     ```powershell
+     if (Test-Path "$env:USERPROFILE\.claude\skills\arxiv-translator\SKILL.md") { "OK" } else { "MISSING" }
+     ```
+   - 输出 `MISSING` → 给用户一行中文提示：
+     ```
+     arxiv-translator skill 未注册，跳过翻译。要启用翻译，先跑：
+     `Copy-Item -Recurse C:\Users\jielu\Desktop\arxiv-translator\arxiv-translator\* $env:USERPROFILE\.claude\skills\arxiv-translator\`
+     然后**完全退出 Claude Code 重启**，重 ingest 时加 --translate。
+     ```
+     **不要**自动 install——尊重用户系统控制权。整个 step 3.5 后续跳过；进 step 4 summary。
+   - 输出 `OK` → 进 3.5.1。
+
+   **3.5.1 逐篇翻译循环**：
+
+   对 step 3 已成功下载的每篇 arxiv 论文（按 `arxiv_id` 顺序，**串行**——arxiv-translator 内部 latex.ytotech.com 单 session）：
+
+   1. 调 `Skill(skill="arxiv-translator", args="<arxiv_id> --output-dir <project>/.paic/library/pdfs/")`
+      - args 格式：`<arxiv_id>` 后跟一个空格 + `--output-dir <绝对路径>`，路径用项目的 `<cwd>/.paic/library/pdfs/`
+      - 让 arxiv-translator 自己跑 `download.py → translate（由当前对话 LLM）→ compile.py → cleanup.py`
+      - 整个翻译耗时单篇 60-180s（含在线 LuaLaTeX 编译 30-60s + 翻译时间）；**不要**设客户端 timeout
+   2. 翻译完成后从 Skill 返回拿 PDF 路径（arxiv-translator 用论文标题做文件名，如 `Attention Is All You Need.pdf`）
+   3. **rename 成 `<display_basename>_zh.pdf`**：
+      ```powershell
+      Move-Item "<paper_title>.pdf" "<display_basename>_zh.pdf"
+      ```
+      bash:
+      ```bash
+      mv "<paper_title>.pdf" "<display_basename>_zh.pdf"
+      ```
+      命名要保证**与 step 2.5 计算的 display_basename 一致**——后续 `/paic-draft` 引用 `_zh.pdf` 时按 display_basename 解析。
+
+   **失败处理**：
+   - arxiv-translator 报 `no .tex files found`（罕见 PDF-only 论文）→ 标 `translation_failed_no_latex_source`，summary 列出 → 继续下一篇
+   - arxiv-translator 编译失败（`latex.ytotech.com` 503 或编译错）→ 标 `translation_failed_online_compile`，附 last error 摘要 → 继续下一篇
+   - 翻译被用户中断（Ctrl+C / token 用尽 / 翻译漏译过多 inspect_tex 阻塞）→ 标 `translation_aborted` → 继续下一篇
+   - rename 失败（目标已存在；同篇重 ingest + 重翻）→ 当作成功，summary 注明 "已存在，覆盖" 并保留新版本
+
+   **3.5.2 翻译 summary 段**（在 step 4 主 summary 之前，单独一段）：
+
+   ```
+   **中文翻译**：N 篇成功（<basename>_zh.pdf）/ K 篇失败
+     - translation_failed_no_latex_source: <列 cite_key>
+     - translation_failed_online_compile: <列 cite_key>
+     - translation_aborted: <列 cite_key>
+   翻译版集中在 library/pdfs/*_zh.pdf；原 markdown / PDF 仍是英文，summarize / draft 链路用英文版。
+   ```
+
+   未触发翻译模式（`translate_zh=false`）整段跳过、summary 不出现"中文翻译"字段。
+
 4. Render a short Chinese summary:
    - 已纳入 N 篇 (列 title)
-   - **本地存档**：`.paic/library/pdfs/` 下新增了 X 个文件（列前几个 display_basename + 扩展名，如 `001_attention_is_all_you_need.md`、`002_motor_imagery_classification.pdf`）
-   - **rename 命中**：Y 次（download_with_fallback 自定义文件名 → 改回 `<display_basename>.<ext>`）
+   - **本地存档**：`.paic/library/pdfs/` 下新增了 X 个文件，按扩展名分组列出计数：`.md` × A 篇（arxiv markdown）/ `.pdf` × B 篇（含 arxiv 原始 PDF + 其他平台下载的 PDF）/ `_zh.pdf` × C 篇（仅 `translate_zh=true` 时出现）。列前几个示例 display_basename + 扩展名（如 `001_attention_is_all_you_need.md`、`001_attention_is_all_you_need.pdf`、`001_attention_is_all_you_need_zh.pdf`）
+   - **rename 命中**：Y 次（download_with_fallback 自定义文件名 → 改回 `<display_basename>.<ext>`；翻译模式下 `<paper_title>.pdf` → `<display_basename>_zh.pdf` 也计入）
    - **未下载**：M 篇（按原因分组：`s2 不托管 PDF` / `paper-search-mcp 未注册` / `unpaywall_email_missing` / `Unsupported source` / `pubmed_no_oa` / `ieee_paywalled` / `acm_no_oa` / `publisher_referer_block`（IOP/IEEE OA 但被发布商拦） / `连续 3 次 429 用户决定 skip` / `download_with_fallback 全链路失败` / `download_with_fallback_int_bug` / `europepmc_wrong_paper` / `europepmc_suspect_kept` / `subscription_journal_no_oa`）
    - **手动下载提示**：若 `europepmc_wrong_paper` / `subscription_journal_no_oa` / `publisher_referer_block` / `ieee_paywalled` 任一 ≥1，列出受影响论文（display_basename + DOI/arxiv_id + 期望落盘路径 `library/pdfs/<display_basename>.pdf`），告诉用户「这些篇 silent corruption / 订阅墙 / 发布商防护，请浏览器手取 PDF 放到上面对应路径，attach 是 idempotent 的，下次 `/paic-summarize` 会自动用上」。
    - 跳过 K 篇 (重复; 列 arxiv_id)
@@ -210,6 +276,8 @@ allowed-tools: mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic_
 - **物理 PDF 文件名 = `<display_basename>.<ext>`**（人类可读：`001_attention_is_all_you_need.pdf`）；BibTeX `\cite{KEY}` 和 `_resolve_paper` entry 匹配仍用 `<cite_key>`（如 `arxiv_2401_12345`）。两者解耦——不要混用。selected.yaml 里 `pdf_local_path` 是新名，`/paic-summarize` 优先读这个、没有再回退到 `<cite_key>.<ext>`（兼容老库）。
 
 ## 已知陷阱
+- **arxiv 双下载需双 pace**：step 3.1 路由表 arxiv 行新增 PDF 下载（urllib 拉 `https://arxiv.org/pdf/<id>.pdf`）后，arxiv.org 限流（1 req / 3s）按调用计数——markdown 与 PDF 是**两条独立 endpoint**，必须**分别**调 `mcp__paic__paic_arxiv_pace()`。漏掉第二个 pace → 第二篇起几乎必撞 429。
+- **arxiv-translator 翻译耗时极长**：单篇翻译 60-180s（含在线 LuaLaTeX 编译 30-60s + 翻译时间）；17 篇全译 ≥ 1.5 小时。**只在用户显式要求**（step 1 的 `translate_zh=true`）才走 step 3.5；默认行为只下载不翻译。翻译走 `latex.ytotech.com` 在线编译服务，需联网；服务挂了就标 `translation_failed_online_compile` 跳过、不要客户端重试。
 - arxiv MCP 不同版本默认存储路径不一样（`~/Documents/arxiv-papers/` vs `~/.arxiv-mcp/papers/`）。PAI-C 默认两个都探，但若用户的安装把文件放到第三处，`/paic-summarize` 会回 `paper_markdown_not_found`。处理方式见 `paic-summarize` skill —— **不要**手动复制目录绕行；让 `/paic-summarize` 通过 `mcp__arxiv__read_paper` 取文本再传 `paper_text=`。
 - 第一次使用时建议提示用户跑 `uv run paic doctor`，提前发现路径与凭证问题。
 - **paper-search-mcp 的 download 工具签名**：约定接受 `paper_id` + `save_path`，但不同 platform 的具体参数名可能略有差异（如 `pmid` vs `paper_id`、`pmcid` 等）。第一次跑某 platform 时如果工具报参数错误，从工具的错误响应里看到正确字段名后调整。`download_with_fallback` 实际签名是 `(source, paper_id, doi="", title="", save_path=...)` —— `source` + `paper_id` 都必填，**不是**只接 `doi`。
