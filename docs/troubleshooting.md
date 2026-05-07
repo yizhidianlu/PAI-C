@@ -108,15 +108,17 @@ PAI-C 走完四级 fallback 都没找到全文。响应里的 `text_source` 没�
 **四级 fallback 是什么**（自动尝试）：
 1. `paper_text=` 旁路（你显式传的）
 2. 上游 arxiv markdown（`arxiv_mcp_storage_paths` 里的 `<id>.md`，仅 arxiv 论文）
-3. `<project>/.paic/library/pdfs/<cite_key>.md`（ingest 时 attach 拷贝）
-4. `<project>/.paic/library/pdfs/<cite_key>.pdf` + pypdf 提取
+3. `<project>/.paic/library/pdfs/<pdf_local_path>`（ingest 时写入 `selected.yaml` 的字段；新库为 `NNN_title.md`，老库为 `<cite_key>.md`）
+4. 同位置 `.pdf` + pypdf 提取
+
+> **找不到 PDF 文件名**：先看 `selected.yaml` 里这一篇的 `pdf_local_path` 字段——那就是 PAI-C 实际去找的文件名。下面命令里的 `<filename>` 都用这个值（如 `001_attention_is_all_you_need.pdf`）；空字段或老库时退回到 `<cite_key>.pdf`（如 `arxiv_2401_12345.pdf`）。
 
 **修复路径**：
 
 - **响应有 `pdf_extraction_failed_reason`**——PDF 在但提取失败：
-  - `encrypted`：用 `qpdf --decrypt <in> <out>`（macOS/Linux 都有 brew/apt 包）解密后替换 `.paic/library/pdfs/<cite_key>.pdf`，重 summarize
+  - `encrypted`：用 `qpdf --decrypt <in> <out>`（macOS/Linux 都有 brew/apt 包）解密后替换 `.paic/library/pdfs/<filename>`，重 summarize
   - `empty_extraction`：扫描版 PDF。`ocrmypdf <in> <out>` 跑 OCR 后替换重试。PAI-C 不自动 OCR
-  - `corrupt`：删 `.paic/library/pdfs/<cite_key>.pdf` + `/paic-ingest <id>` 重下载
+  - `corrupt`：删 `.paic/library/pdfs/<filename>` + `/paic-ingest <id>` 重下载
 - **响应没有 `pdf_extraction_failed_reason`**（连 PDF 都没有）：
   1. `paic doctor` 看 `arxiv storage` 行，确认根路径 OK
   2. arxiv MCP 自己有没下载完？让 Claude 调 `mcp__arxiv__list_papers` 看

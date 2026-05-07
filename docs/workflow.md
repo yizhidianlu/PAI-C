@@ -66,23 +66,26 @@
 
 ---
 
-## 3. `/paic-ingest <ids>` — 入库 + 下载
+## 3. `/paic-ingest <ids>` — 入库 + 下载（+ 可选翻译 / Zotero）
 
 ```text
-ingest 第 1, 3, 7 篇。
+ingest 第 1, 3, 7 篇。           # 默认：只下载、不翻译
+ingest 第 1, 3, 7 篇 帮我翻译     # 加任一关键词「翻译/译/中文/translate」→ 触发 opt-in 中文翻译
 ```
 
 - **元数据**：写入 `.paic/library/selected.yaml`（PaperRef）
-- **本地存档**：`.paic/library/pdfs/<cite_key>.<ext>`。`<cite_key>` 与 BibTeX 键一致（`arxiv_2401_12345` / `doi_10_1234_abc`）；扩展名为 `.md`（arxiv markdown）或 `.pdf`（其他平台）
+- **本地存档**：`.paic/library/pdfs/<display_basename>.<ext>`，命名格式 `NNN_<title_slug>`（如 `001_attention_is_all_you_need.md`）——3 位库内累积序号 + `_` + 标题转 slug（非字母数字 → `_`、最多 150 字符）。文件名按人类可读优化，与 BibTeX `\cite{KEY}` 用的 `cite_key`（`arxiv_2401_12345` / `doi_10_1234_abc` 等）解耦；`pdf_local_path` 字段写回 `selected.yaml`，下游 summarize / draft 优先读它，没有再回退到 `<cite_key>.<ext>`（兼容老库）
 - **平台路由**：
-  - **arXiv**：`mcp__arxiv__download_paper` 写到上游 storage（`~/Documents/arxiv-papers/` 等），随后 `paic_library_attach_paper` 复制 markdown 到项目本地
-  - **paper-search-mcp 平台**（pubmed / biorxiv / medrxiv / pmc / openalex / crossref，需 `external_search.enabled=true`）：`mcp__paper_search__download_<platform>(save_path=<project>/.paic/library/pdfs/<cite_key>.pdf)` 直接落地
-  - **DOI-only**：`mcp__paper_search__download_with_fallback`（Unpaywall / Crossref 等）
-  - **不可下载**（s2 / google_scholar / ssrn / iacr）：跳过下载、仅入库元数据；摘要标注 `未下载: N 篇（原因）`
-- **去重**：再次按 arxiv_id / DOI 与已有 `selected.yaml` 校验，重复条目计入 `skipped_duplicates`
-- **节流**：arxiv 默认 6s pace；paper-search-mcp 各平台用 `paic_search_pace(platform=...)`，per-platform 配置见 `~/.paic/config.yaml`
-- **429 重试**：自动 `paic_*_pace(seconds=20)` 后重试；连续 3 次 429 时由用户决定 skip 或调高 pace
-- **耗时**：每篇 5–30 秒（网络 + 转换）；17 篇 arXiv 默认 ~102s
+  - **arXiv**：双下载——(a) `mcp__arxiv__download_paper` 拿 markdown 写到上游 storage，`paic_library_attach_paper` 复制成 `<display_basename>.md`；(b) urllib 直接拉 `https://arxiv.org/pdf/<id>.pdf` 落到 `<display_basename>.pdf`（供阅读 / 引用，summarize 链路仍以 markdown 为主）。两次下载之间各 pace 一次（arxiv.org 1 req/3s 限流按调用计数）
+  - **paper-search-mcp 平台**（pubmed / biorxiv / medrxiv / pmc / openalex / crossref / ieee / acm，需 `external_search.enabled=true`）：直连或 `download_with_fallback`（Unpaywall / Crossref / OA repo 等），落到 `<display_basename>.<ext>`
+  - **DOI 前缀 prefilter**：订阅墙黑名单（`10.1088` IOP / `10.1109` IEEE / `10.1016` Elsevier / `10.1002` Wiley / `10.1007` Springer 等）跳过 fallback 直接入未下载列表（命中率近 0、且 europepmc fallback 会 silent 返回错论文 PDF）
+  - **不可下载**（s2 / google_scholar / ssrn / iacr / 缺 UNPAYWALL_EMAIL）：跳过下载、仅入库元数据；摘要标注 `未下载: N 篇（原因）`
+- **去重**：按 arxiv_id / DOI 与 `selected.yaml` 校验，重复条目计入 `skipped_duplicates`；同一篇重 ingest 时 attach 看到 dest 已存在 silent 跳过、但仍回写 `pdf_local_path`
+- **europepmc 内容校验**：fallback 路径下载的 PDF 走 page-1 三信号校验（作者姓氏 + 标题词命中率 + 字符串相似度）；任一信号不满足 → 列清单**询问用户**后才删（不擅自批量删）
+- **节流**：arxiv 默认 6s pace；paper-search-mcp 各平台 per-platform pace；429 自动 `paic_*_pace(seconds=20)` 重试，连续 3 次由用户决定 skip / 调高 pace
+- **opt-in 中文翻译**（用户原话含「翻译/译/中文/translate」或加 `--translate`）：主对话**不**逐篇翻译，而是**一次性委派**给后台 `Agent(subagent_type="general-purpose", run_in_background=true)`——主对话拿到 ingest summary 后立刻空闲、可继续跑别的命令；后台 subagent 串行调 `arxiv-translator` skill（latex.ytotech.com 单 session，不能并行），完成时自动通知。产物 `<display_basename>_zh.pdf`。**仅对 arxiv 论文有效**（其它平台无 LaTeX 源码）。需要先把 arxiv-translator skill 装到 `~/.claude/skills/`，未装则整段跳过
+- **opt-in Zotero 同步**：检测到 zotero-mcp 注册时询问用户是否同步本批；同步走 DOI / arXiv URL 两条路径（priority 1/2），写入 collection `paic-ingest-<YYYYMMDD>`。详见 [zotero-sync.md](zotero-sync.md)
+- **耗时**：每篇 5–30 秒（网络 + 转换）；17 篇 arXiv 默认 ~102s。翻译耗时**不计入主流程**（后台跑），单篇 60–180s
 
 ---
 
@@ -92,7 +95,7 @@ ingest 第 1, 3, 7 篇。
 /paic-summarize all
 ```
 
-- **读取（4 级 fallback）**：(1) `paper_text=` 旁路；(2) 上游 arxiv markdown（仅 arxiv）；(3) `<project>/.paic/library/pdfs/<cite_key>.md`（ingest 阶段 attach 拷贝）；(4) `<project>/.paic/library/pdfs/<cite_key>.pdf` + pypdf 提取（命中 `~/.paic/cache/pdf_text/<sha>.txt` 永久缓存）。响应 `text_source` 字段表示生效路径
+- **读取（4 级 fallback）**：(1) `paper_text=` 旁路；(2) 上游 arxiv markdown（仅 arxiv）；(3) `<project>/.paic/library/pdfs/<pdf_local_path>`（ingest 时写入 `selected.yaml` 的字段，新库为 `<display_basename>.<ext>` 即 `NNN_title` 格式；老库回退到 `<cite_key>.<ext>` 兼容路径）；(4) 同位置的 `.pdf` + pypdf 提取（命中 `~/.paic/cache/pdf_text/<sha>.txt` 永久缓存）。响应 `text_source` 字段表示生效路径
 - **平台覆盖**：arXiv 走 (2)；PubMed / bioRxiv / OpenAlex / Crossref 等走 (4)
 - **写入**：`.paic/library/summaries/<paper_id>.md`
 - **结构**：problem / method / key_results / limitations / techniques / relevance_to_project

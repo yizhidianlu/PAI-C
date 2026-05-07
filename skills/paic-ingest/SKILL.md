@@ -1,7 +1,7 @@
 ---
 name: paic-ingest
 description: Ingest selected papers into the project library — adds them to .paic/library/selected.yaml, downloads PDFs/markdowns via the appropriate per-platform tool (arxiv MCP for arxiv; paper-search-mcp for pubmed / biorxiv / openalex / etc.), names files as `NNN_title.<ext>` under .paic/library/pdfs/, and (optionally) syncs the batch to Zotero via zotero-mcp. Use after /paic-search when the user picks which papers to keep.
-allowed-tools: Bash, Skill, mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic__paic_library_add, mcp__paic__paic_library_attach_paper, mcp__paic__paic_workspace_status, mcp__paic__paic_arxiv_pace, mcp__paic__paic_search_pace, mcp__paper_search__download_arxiv, mcp__paper_search__download_pubmed, mcp__paper_search__download_biorxiv, mcp__paper_search__download_medrxiv, mcp__paper_search__download_pmc, mcp__paper_search__download_openalex, mcp__paper_search__download_crossref, mcp__paper_search__download_ieee, mcp__paper_search__download_with_fallback, mcp__zotero_mcp__zotero_get_collections, mcp__zotero_mcp__zotero_create_collection, mcp__zotero_mcp__zotero_add_by_doi, mcp__zotero_mcp__zotero_add_by_url, mcp__zotero_mcp__zotero_add_from_file
+allowed-tools: Bash, Skill, Agent, mcp__arxiv__download_paper, mcp__arxiv__search_papers, mcp__paic__paic_library_add, mcp__paic__paic_library_attach_paper, mcp__paic__paic_workspace_status, mcp__paic__paic_arxiv_pace, mcp__paic__paic_search_pace, mcp__paper_search__download_arxiv, mcp__paper_search__download_pubmed, mcp__paper_search__download_biorxiv, mcp__paper_search__download_medrxiv, mcp__paper_search__download_pmc, mcp__paper_search__download_openalex, mcp__paper_search__download_crossref, mcp__paper_search__download_ieee, mcp__paper_search__download_with_fallback, mcp__zotero__zotero_get_collections, mcp__zotero__zotero_create_collection, mcp__zotero__zotero_add_by_doi, mcp__zotero__zotero_add_by_url
 ---
 
 # /paic-ingest — add papers to the project library
@@ -28,7 +28,7 @@ allowed-tools: Bash, Skill, mcp__arxiv__download_paper, mcp__arxiv__search_paper
    1. 调一次 `mcp__paic__paic_workspace_status(project_dir=<cwd>)` 拿当前 selected.yaml 篇数 K（首次 ingest 时 K=0）。
    2. 对本批论文按用户指定顺序枚举 `i = 1..N`（N = 本批论文数）：
       - `seq = K + i`（3 位 0 填充：K=12, i=3 → `015`；K=0, i=1 → `001`）。
-      - `title_slug = re.sub(r'[^A-Za-z0-9]+', '_', title.strip()).lower().strip('_')[:60]`（非字母数字一律换 `_`、去首尾 `_`、限 60 字符；空 title 极少见，slug 落到 `ref`）。
+      - `title_slug = re.sub(r'[^A-Za-z0-9]+', '_', title.strip()).lower().strip('_')[:150]`（非字母数字一律换 `_`、去首尾 `_`、限 **150 字符**——足够装下绝大多数 arXiv 标题，文件管理器里 `序号_完整论文标题` 能看清；空 title 极少见，slug 落到 `ref`）。后端 `_sanitize_display_name` 卡的是最终文件名 ≤ 200 字符；slug=150 时 `<seq:03d>_<slug>_zh.pdf` ≈ 161 字符，留 39 字符余量给序号扩展和 `_zh.pdf` 后缀。
       - `display_basename = f"{seq:03d}_{title_slug}"`（不含扩展名；如 `001_attention_is_all_you_need`）。
    3. 序号策略**库内累积**——同一论文重 ingest 时 attach 看到 dest 已存在会 silently 跳过 + 回写 yaml；不同批次序号自然衔接（005 之后下一批从 006 起）。
    4. cite_key（`arxiv_2401_12345` / `doi_10_1234_abc` / `s2_<id>` / `<title 首词>_<year>`）仍是 **BibTeX `\cite{...}` 引用键**，与物理 PDF 文件名彻底解耦——cite_key 在 LaTeX 输出 / `_resolve_paper` entry 匹配里使用，不再做物理文件名。`paic_library_attach_paper(... display_name=f"{display_basename}.{ext}")` 会把 `pdf_local_path = "<display_basename>.<ext>"` 回写 selected.yaml，让 `/paic-summarize` 能直接定位 PDF。
@@ -183,46 +183,70 @@ allowed-tools: Bash, Skill, mcp__arxiv__download_paper, mcp__arxiv__search_paper
      **不要**自动 install——尊重用户系统控制权。整个 step 3.5 后续跳过；进 step 4 summary。
    - 输出 `OK` → 进 3.5.1。
 
-   **3.5.1 逐篇翻译循环**：
+   **3.5.1 委派给后台翻译 subagent**（**整批一次**调 Agent，不在主对话里逐篇翻译——主对话拿到 ingest summary 后立刻空闲，翻译在独立 context 里串行跑、完成时自动通知）：
 
-   对 step 3 已成功下载的每篇 arxiv 论文（按 `arxiv_id` 顺序，**串行**——arxiv-translator 内部 latex.ytotech.com 单 session）：
+   - 收集 step 3 已成功下载的所有 arxiv 论文，构造一个清单：每行 `<arxiv_id>  →  <display_basename>`（display_basename 来自 step 2.5）。
+   - **整批论文都不是 arxiv** 或者 step 3 全部失败 → 整段跳过，**不**调 Agent。
+   - 否则调一次（单条消息内）：
 
-   1. 调 `Skill(skill="arxiv-translator", args="<arxiv_id> --output-dir <project>/.paic/library/pdfs/")`
-      - args 格式：`<arxiv_id>` 后跟一个空格 + `--output-dir <绝对路径>`，路径用项目的 `<cwd>/.paic/library/pdfs/`
-      - 让 arxiv-translator 自己跑 `download.py → translate（由当前对话 LLM）→ compile.py → cleanup.py`
-      - 整个翻译耗时单篇 60-180s（含在线 LuaLaTeX 编译 30-60s + 翻译时间）；**不要**设客户端 timeout
-   2. 翻译完成后从 Skill 返回拿 PDF 路径（arxiv-translator 用论文标题做文件名，如 `Attention Is All You Need.pdf`）
-   3. **rename 成 `<display_basename>_zh.pdf`**：
-      ```powershell
-      Move-Item "<paper_title>.pdf" "<display_basename>_zh.pdf"
-      ```
-      bash:
-      ```bash
-      mv "<paper_title>.pdf" "<display_basename>_zh.pdf"
-      ```
-      命名要保证**与 step 2.5 计算的 display_basename 一致**——后续 `/paic-draft` 引用 `_zh.pdf` 时按 display_basename 解析。
+     ```
+     Agent(
+       description="后台翻译 N 篇 arxiv 论文为中文 PDF",
+       subagent_type="general-purpose",
+       run_in_background=true,
+       prompt=<下面的 self-contained prompt 模板>
+     )
+     ```
 
-   **失败处理**：
-   - arxiv-translator 报 `no .tex files found`（罕见 PDF-only 论文）→ 标 `translation_failed_no_latex_source`，summary 列出 → 继续下一篇
-   - arxiv-translator 编译失败（`latex.ytotech.com` 503 或编译错）→ 标 `translation_failed_online_compile`，附 last error 摘要 → 继续下一篇
-   - 翻译被用户中断（Ctrl+C / token 用尽 / 翻译漏译过多 inspect_tex 阻塞）→ 标 `translation_aborted` → 继续下一篇
-   - rename 失败（目标已存在；同篇重 ingest + 重翻）→ 当作成功，summary 注明 "已存在，覆盖" 并保留新版本
+   - **prompt 模板**（subagent 看不到主对话历史，所有信息都得写进 prompt 里）：
 
-   **3.5.2 翻译 summary 段**（在 step 4 主 summary 之前，单独一段）：
+     ```
+     你是一个后台翻译 worker。任务：串行调用 arxiv-translator skill 把下面 N 篇 arxiv 论文翻译成中文 PDF。
+
+     **绝对不要并行**——arxiv-translator 内部 latex.ytotech.com 是单 session，多个并发请求会互相挤掉、出现 503 / session 错乱。严格按清单顺序逐篇处理。
+
+     论文清单（按顺序处理）：
+       - arxiv_id: <id1>  →  display_basename: <basename1>
+       - arxiv_id: <id2>  →  display_basename: <basename2>
+       ...
+
+     输出目录（绝对路径）：<cwd>/.paic/library/pdfs/
+
+     每篇按下面 3 步走：
+
+     1. 调 `Skill(skill="arxiv-translator", args="<arxiv_id> --output-dir <output_dir>")`。args 格式：arxiv_id + 一个空格 + `--output-dir` + 绝对路径。让 arxiv-translator 自己跑 download → translate（由你这个 subagent LLM 翻译） → compile → cleanup。单篇耗时 60-180s（含在线 LuaLaTeX 编译 30-60s），**不要**设客户端 timeout。
+     2. arxiv-translator 用论文标题做 PDF 文件名（如 `Attention Is All You Need.pdf`）。用 PowerShell `Move-Item` 或 bash `mv` 把它改名为 `<display_basename>_zh.pdf`。命名必须与清单里的 display_basename 完全一致——后续 /paic-draft 引用 _zh.pdf 时按 display_basename 解析。
+     3. 失败按下面分类记录原因后**继续下一篇**，不要中断整批：
+        - arxiv-translator 报 `no .tex files found`（罕见 PDF-only 论文） → `translation_failed_no_latex_source`
+        - 编译失败（`latex.ytotech.com` 503 或编译错） → `translation_failed_online_compile`，附 last error 摘要
+        - 中断（token 用尽 / inspect_tex 漏译过多阻塞） → `translation_aborted`
+        - rename 目标已存在（同篇重 ingest 重翻） → 当作成功，注明 "已存在，覆盖"
+
+     全部跑完后，最后输出一段中文 markdown summary，格式：
+
+     ```
+     **中文翻译**：N/M 篇成功（产物：library/pdfs/<basename>_zh.pdf）
+       - translation_failed_no_latex_source: <列 cite_key 或 arxiv_id>
+       - translation_failed_online_compile: <列 cite_key 或 arxiv_id>
+       - translation_aborted: <列 cite_key 或 arxiv_id>
+     ```
+     ```
+
+   - **integer arxiv_id 注意**：prompt 里把 arxiv_id 写成字符串（带引号或裸值都行，但不要让模型把 `2401.12345` 解析成浮点丢精度）；clipboard 复制 → 粘贴时确认前导 0 没丢。
+
+   **3.5.2 主对话立刻打的中文提示**（在 step 4 主 summary 之前，单独一段；**不等翻译完成**）：
 
    ```
-   **中文翻译**：N 篇成功（<basename>_zh.pdf）/ K 篇失败
-     - translation_failed_no_latex_source: <列 cite_key>
-     - translation_failed_online_compile: <列 cite_key>
-     - translation_aborted: <列 cite_key>
-   翻译版集中在 library/pdfs/*_zh.pdf；原 markdown / PDF 仍是英文，summarize / draft 链路用英文版。
+   **中文翻译**：N 篇 arxiv 论文已委派后台 subagent 串行翻译（预计 N × 60–180s = X 分钟）。
+   完成时会自动通知；期间可继续 /paic-summarize / /paic-search 等其它命令，不冲突。
+   原 markdown / 英文 PDF 已落地，summarize / draft 链路用英文版即可，无需等翻译。
    ```
 
    未触发翻译模式（`translate_zh=false`）整段跳过、summary 不出现"中文翻译"字段。
 
 4. Render a short Chinese summary:
    - 已纳入 N 篇 (列 title)
-   - **本地存档**：`.paic/library/pdfs/` 下新增了 X 个文件，按扩展名分组列出计数：`.md` × A 篇（arxiv markdown）/ `.pdf` × B 篇（含 arxiv 原始 PDF + 其他平台下载的 PDF）/ `_zh.pdf` × C 篇（仅 `translate_zh=true` 时出现）。列前几个示例 display_basename + 扩展名（如 `001_attention_is_all_you_need.md`、`001_attention_is_all_you_need.pdf`、`001_attention_is_all_you_need_zh.pdf`）
+   - **本地存档**：`.paic/library/pdfs/` 下新增了 X 个文件，按扩展名分组列出计数：`.md` × A 篇（arxiv markdown）/ `.pdf` × B 篇（含 arxiv 原始 PDF + 其他平台下载的 PDF）/ `_zh.pdf` × C 篇（仅 `translate_zh=true` 时出现；step 3.5.1 已委派后台 subagent，**此时 C 可能还在 0 / 部分完成——以后台 agent 最终通知为准**）。列前几个示例 display_basename + 扩展名（如 `001_attention_is_all_you_need.md`、`001_attention_is_all_you_need.pdf`、`001_attention_is_all_you_need_zh.pdf`）
    - **rename 命中**：Y 次（download_with_fallback 自定义文件名 → 改回 `<display_basename>.<ext>`；翻译模式下 `<paper_title>.pdf` → `<display_basename>_zh.pdf` 也计入）
    - **未下载**：M 篇（按原因分组：`s2 不托管 PDF` / `paper-search-mcp 未注册` / `unpaywall_email_missing` / `Unsupported source` / `pubmed_no_oa` / `ieee_paywalled` / `acm_no_oa` / `publisher_referer_block`（IOP/IEEE OA 但被发布商拦） / `连续 3 次 429 用户决定 skip` / `download_with_fallback 全链路失败` / `download_with_fallback_int_bug` / `europepmc_wrong_paper` / `europepmc_suspect_kept` / `subscription_journal_no_oa`）
    - **手动下载提示**：若 `europepmc_wrong_paper` / `subscription_journal_no_oa` / `publisher_referer_block` / `ieee_paywalled` 任一 ≥1，列出受影响论文（display_basename + DOI/arxiv_id + 期望落盘路径 `library/pdfs/<display_basename>.pdf`），告诉用户「这些篇 silent corruption / 订阅墙 / 发布商防护，请浏览器手取 PDF 放到上面对应路径，attach 是 idempotent 的，下次 `/paic-summarize` 会自动用上」。
@@ -233,7 +257,7 @@ allowed-tools: Bash, Skill, mcp__arxiv__download_paper, mcp__arxiv__search_paper
 5. **（可选）同步到 Zotero** —— 把本批论文同步到 Zotero library，含 metadata + PDF 附件 + collection 组织。
 
    **5.0 检测 zotero-mcp 可用性**：
-   - 尝试调一次 `mcp__zotero_mcp__zotero_get_collections()`。
+   - 尝试调一次 `mcp__zotero__zotero_get_collections()`。
    - 工具不在 allowed-tools 实际可用集 / 调用抛 connection error / 返回 error → **silently 跳过 step 5.x**，不向用户报错（用户没装 zotero-mcp 是常态）。
    - 成功（返回 collection 列表）→ 进 5.1。
 
@@ -247,23 +271,24 @@ allowed-tools: Bash, Skill, mcp__arxiv__download_paper, mcp__arxiv__search_paper
 
    **5.2 准备 collection**（仅当用户没回「留空」时）：
    - 拿 5.0 返回的 collection 列表，按 name 查重；存在则直接用其 `key`。
-   - 不存在 → 调 `mcp__zotero_mcp__zotero_create_collection(name=<final_name>)`，拿到新 collection `key`。
+   - 不存在 → 调 `mcp__zotero__zotero_create_collection(name=<final_name>)`，拿到新 collection `key`。
    - 创建失败（如重名 race）→ 退一步当作「不入 collection」继续 5.3，不打断。
 
    **5.3 逐篇路由 add**（每次单独一条 zotero tool 调用）：
 
    | 优先级 | 条件 | 工具 |
    |---|---|---|
-   | 1 | `paper.doi` 非空 | `mcp__zotero_mcp__zotero_add_by_doi(doi=<doi>, collections=[<collection_key 或 略>], tags=["paic", *paper.tags], attach_mode="auto")` —— Zotero 自动抓 CrossRef 元数据 + 试 Unpaywall / arXiv / PMC OA PDF |
-   | 2 | `paper.arxiv_id` 非空 | `mcp__zotero_mcp__zotero_add_by_url(url=f"https://arxiv.org/abs/{arxiv_id}", collections=[...], tags=["paic", ...])` |
-   | 3 | 本地 PDF 已落地（`pdf_local_path` 非空 & 文件存在） | `mcp__zotero_mcp__zotero_add_from_file(file_path="<cwd>/.paic/library/pdfs/<pdf_local_path>", title=<title>, item_type="journalArticle", collections=[...], tags=["paic", ...])` |
-   | 4 | 三种都不可行 | 列入 `zotero_skipped`（reason: `no_doi_no_arxiv_no_pdf`） |
+   | 1 | `paper.doi` 非空 | `mcp__zotero__zotero_add_by_doi(doi=<doi>, collections=[<collection_key 或 略>], tags=["paic", *paper.tags], attach_mode="auto")` —— Zotero 自动抓 CrossRef 元数据 + 试 Unpaywall / arXiv / PMC OA PDF |
+   | 2 | `paper.arxiv_id` 非空 | `mcp__zotero__zotero_add_by_url(url=f"https://arxiv.org/abs/{arxiv_id}", collections=[...], tags=["paic", ...])` |
+   | 3 | 两种都不可行 | 列入 `zotero_skipped`（reason: `no_doi_no_arxiv`） |
+
+   > **没有「本地 PDF 兜底上传」路径**——zotero-mcp v0.3.0 不再暴露 `zotero_add_from_file`，无法把孤立 PDF 当作新 item 创建。如果某篇既无 DOI 也无 arxiv_id，请先把它在 Zotero 端手动加进去，再让 PAI-C 用 DOI/arxiv_id 路径同步。
 
    每篇任意一种 zotero call 报错 → silently retry 一次（除明确 4xx）；仍失败则计入失败列表，不要打断后续篇。
 
    **5.4 渲染中文同步报告**（紧跟 step 4 输出）：
    - 同步成功 J/N 篇（collection: `<final_name>` 或 `（未入 collection）`）
-   - 失败 K 篇（按原因分组：`no_doi_no_arxiv_no_pdf` / `zotero_api_error` / `duplicate_in_zotero`（zotero_add_by_doi 上游会去重，返已存在 item key 视为成功）/ `collection_create_failed` / `zotero_app_offline`）
+   - 失败 K 篇（按原因分组：`no_doi_no_arxiv` / `zotero_api_error` / `duplicate_in_zotero`（zotero_add_by_doi 上游会去重，返已存在 item key 视为成功）/ `collection_create_failed` / `zotero_app_offline`）
    - 一行提示：「Zotero item key 仅存于 zotero-mcp，PAI-C 不维护反向映射；后续在 Zotero 改 metadata / 加 note / 移 collection 都不影响 PAI-C」。
 
 ## Style
@@ -277,7 +302,7 @@ allowed-tools: Bash, Skill, mcp__arxiv__download_paper, mcp__arxiv__search_paper
 
 ## 已知陷阱
 - **arxiv 双下载需双 pace**：step 3.1 路由表 arxiv 行新增 PDF 下载（urllib 拉 `https://arxiv.org/pdf/<id>.pdf`）后，arxiv.org 限流（1 req / 3s）按调用计数——markdown 与 PDF 是**两条独立 endpoint**，必须**分别**调 `mcp__paic__paic_arxiv_pace()`。漏掉第二个 pace → 第二篇起几乎必撞 429。
-- **arxiv-translator 翻译耗时极长**：单篇翻译 60-180s（含在线 LuaLaTeX 编译 30-60s + 翻译时间）；17 篇全译 ≥ 1.5 小时。**只在用户显式要求**（step 1 的 `translate_zh=true`）才走 step 3.5；默认行为只下载不翻译。翻译走 `latex.ytotech.com` 在线编译服务，需联网；服务挂了就标 `translation_failed_online_compile` 跳过、不要客户端重试。
+- **arxiv-translator 翻译耗时极长**：单篇翻译 60-180s（含在线 LuaLaTeX 编译 30-60s + 翻译时间）；17 篇全译 ≥ 1.5 小时。**只在用户显式要求**（step 1 的 `translate_zh=true`）才走 step 3.5；默认行为只下载不翻译。翻译走 `latex.ytotech.com` 在线编译服务，需联网；服务挂了就标 `translation_failed_online_compile` 跳过、不要客户端重试。**现在走 step 3.5.1 后台 subagent 处理——主对话不再被翻译循环阻塞**，用户拿到 ingest summary 后就可以继续做别的；翻译完成时 background agent 自动通知。
 - arxiv MCP 不同版本默认存储路径不一样（`~/Documents/arxiv-papers/` vs `~/.arxiv-mcp/papers/`）。PAI-C 默认两个都探，但若用户的安装把文件放到第三处，`/paic-summarize` 会回 `paper_markdown_not_found`。处理方式见 `paic-summarize` skill —— **不要**手动复制目录绕行；让 `/paic-summarize` 通过 `mcp__arxiv__read_paper` 取文本再传 `paper_text=`。
 - 第一次使用时建议提示用户跑 `uv run paic doctor`，提前发现路径与凭证问题。
 - **paper-search-mcp 的 download 工具签名**：约定接受 `paper_id` + `save_path`，但不同 platform 的具体参数名可能略有差异（如 `pmid` vs `paper_id`、`pmcid` 等）。第一次跑某 platform 时如果工具报参数错误，从工具的错误响应里看到正确字段名后调整。`download_with_fallback` 实际签名是 `(source, paper_id, doi="", title="", save_path=...)` —— `source` + `paper_id` 都必填，**不是**只接 `doi`。

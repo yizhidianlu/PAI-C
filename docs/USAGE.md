@@ -77,7 +77,7 @@ ingest 第 X, Y, Z 篇。
 |---|---|
 | `/paic-init` | 在当前目录建项目 |
 | `/paic-search` | 多源检索 + 去重（arXiv + Semantic Scholar；opt-in `paper-search-mcp` 后扩到 20+ 平台，见 [external-search.md](external-search.md)） |
-| `/paic-ingest` | 选定论文入库（自动触发 PDF 下载）；跑完可选同步到 Zotero，见 [zotero-sync.md](zotero-sync.md) |
+| `/paic-ingest` | 选定论文入库（按 `NNN_title` 命名，自动触发 PDF 下载）；说「帮我翻译」可选触发后台 subagent 翻译为中文 PDF（仅 arxiv，需独立装 arxiv-translator skill 到 `~/.claude/skills/`）；跑完可选同步到 Zotero，见 [zotero-sync.md](zotero-sync.md) |
 | `/paic-summarize` | 结构化摘要 |
 | `/paic-ideate` | 生成 idea（含用户筛选 checkpoint） |
 | `/paic-experiment` | 设计实验方案 |

@@ -2,7 +2,7 @@
 
 PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 / PDF 附件 / collection 组织）同步到本地或云端 Zotero。机制是 SKILL 层调用独立的 [zotero-mcp-server](https://github.com/54yyyu/zotero-mcp)（**不在** PAI-C repo 内），不需要任何额外的 PAI-C 配置——只要 zotero-mcp 注册到 Claude Code，PAI-C 的 `/paic-ingest` 就会自动检测到并询问用户是否同步。
 
-> **PAI-C 不替换 zotero-mcp**——zotero-mcp 是独立的、可被 ChatGPT / Cherry Studio / Cursor 等其他客户端共用的 MCP server；PAI-C 只是消费它的几个 tool（`zotero_get_collections` / `zotero_create_collection` / `zotero_add_by_doi` / `zotero_add_by_url` / `zotero_add_from_file`）。
+> **PAI-C 不替换 zotero-mcp**——zotero-mcp 是独立的、可被 ChatGPT / Cherry Studio / Cursor 等其他客户端共用的 MCP server；PAI-C 只是消费它的几个 tool（`zotero_get_collections` / `zotero_create_collection` / `zotero_add_by_doi` / `zotero_add_by_url`）。
 
 ## 适用场景
 
@@ -155,8 +155,9 @@ ingest 跑完最后，**SKILL 应该会问一句**：
 |---|---|---|---|
 | 1 | `paper.doi` 非空 | `zotero_add_by_doi` | Zotero 自动从 CrossRef 抓元数据 + 串联 Unpaywall / arXiv / PMC OA 抓 PDF |
 | 2 | `paper.arxiv_id` 非空 | `zotero_add_by_url(https://arxiv.org/abs/<id>)` | Zotero 自动抓 arXiv 元数据 + PDF |
-| 3 | 本地 PDF 已落地（`.paic/library/pdfs/<seq>_<title>.pdf`） | `zotero_add_from_file` | 上传本地文件，让 Zotero 试着从 PDF 抽 DOI 补元数据 |
-| 4 | 三种都不可行 | 跳过 | 计入 `zotero_skipped`（reason: `no_doi_no_arxiv_no_pdf`） |
+| 3 | 两种都不可行 | 跳过 | 计入 `zotero_skipped`（reason: `no_doi_no_arxiv`） |
+
+> **没有「本地 PDF 兜底上传」路径**——zotero-mcp v0.3.0 不再暴露 `zotero_add_from_file`，PAI-C 无法把孤立 PDF 当作新 item 创建。如果某篇既无 DOI 也无 arxiv_id（极少见——`/paic-search` 出来的论文一般都至少有其一），请先在 Zotero 端手动加进去；后续 PAI-C 拿到 DOI/arxiv_id 后再走 priority 1/2 同步即可。
 
 ### 自动加的 tags
 
@@ -190,7 +191,7 @@ PAI-C → Zotero 是**单向**，不维护反向同步。这意味着：
 | `ZOTERO_LIBRARY_ID not set` | 选了 Web API 但 env 缺一个字段 | 检查 `~/.claude.json` zotero 段四个 env 都有；重启 |
 | collection 一直建不上 | 同名 collection race / 权限 | 改名重试；group library 检查 API key 有 read+write 权限 |
 | 同一篇被建了副本 | 走了 `zotero_add_from_file`（无 DOI 路径） + Zotero 没抽到 DOI | 对该篇手动在 Zotero 里 merge duplicates |
-| SKILL 报 `zotero_skipped: no_doi_no_arxiv_no_pdf` | 论文 metadata 里 doi / arxiv_id 都为空且本地 PDF 没下到 | 用浏览器去原网站手取 PDF，attach 到 PAI-C 后再 sync；或直接在 Zotero 端手动加 |
+| SKILL 报 `zotero_skipped: no_doi_no_arxiv` | 论文 metadata 里 doi / arxiv_id 都为空 | 直接在 Zotero 端手动加这一篇；之后 PAI-C 重 ingest 同一篇时会按 metadata 走 priority 1/2 同步 |
 
 ## 进阶
 
