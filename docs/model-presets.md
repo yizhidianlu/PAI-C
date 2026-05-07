@@ -118,7 +118,7 @@
 
 适用：学生党 / 长期项目 / 已有 Pro/Max 订阅 + 自部署 vLLM。预估账单：单稿 **~$0–3**（取决于 DeepSeek/Qwen 用量）。
 
-策略：能 host orchestration 让主对话做就让主对话做（[host orchestration 机制](configuration.md#host-orchestration订阅复用零外部-llm-调用)）；剩下的全压第三方中转 / 自部署。
+策略：能 host orchestration 让主对话做就让主对话做（21 个 host-aware 节点见 [configuration.md § 节点路由表](configuration.md#节点路由表) 「host-aware」列；用户配置见 [configuration-cookbook.md § Host orchestration 配置](configuration-cookbook.md#host-orchestration-配置)）；剩下的全压第三方中转 / 自部署。
 
 | 节点 | 推荐 | 理由 |
 |---|---|---|
@@ -142,7 +142,7 @@
 | `figure_plan` | **DeepSeek-V3** | 一次性 |
 | `figure_prompt` | **Qwen3-32B** (本地 Ollama 也行) | 短任务，本地 0 成本 |
 
-> ⚠️ **`host` 节点白名单**：当前仅 `summarize` / `draft_compose` / `draft_polish` 三个支持 host orchestration——其他节点配 `host` 会在 graph 跑到时抛 `HostOrchestrationRequired` 而**不**优雅 fallback。完整白名单见 [configuration.md § Host Orchestration](configuration.md#host-orchestration订阅复用零外部-llm-调用)。
+> ⚠️ **`host` 节点边界**：21 个 host-aware 节点之外，4 个高频窄任务节点（`claim_judge` / `paragraph_outline` / `paragraph_write` / `section_coherence_polish`）配 `host` 会触发 `HostOrchestrationRequired`。完整边界见 [configuration.md § 节点路由表](configuration.md#节点路由表)；`paic doctor` 启动时会拒掉非法 host override。
 >
 > ⚠️ **`claude_agent_sdk` 无 prompt caching**——多轮 review 比 `api_key` 模式贵 5–10×（system prompt 每次重传）。订阅党对成本钝感所以无所谓，但走 API 的人要对比账单。
 
@@ -329,4 +329,4 @@ routing:
 
 ---
 
-> 配 backend 机制（命名 profile / fallback / host orchestration / OpenAI 兼容代理）见 [configuration.md](configuration.md)。改完跑 `uv run paic info` + `uv run paic doctor` 验证。
+> 字段语义见 [configuration.md](configuration.md)；实战配方（命名 profile / fallback / host orchestration 全套 yaml / OpenAI 兼容代理 / 混合策略）见 [configuration-cookbook.md](configuration-cookbook.md)。改完跑 `uv run paic info` + `uv run paic doctor` 验证。

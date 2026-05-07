@@ -98,7 +98,7 @@ ingest 第 1, 3, 7 篇 帮我翻译     # 加任一关键词「翻译/译/中文
 - **结构**：problem / method / key_results / limitations / techniques / relevance_to_project
 - **耗时**：每篇 30–60 秒；首次 PDF 提取额外 ~0.5s（之后缓存命中）
 - **PDF 失败恢复**：`encrypted` → `qpdf --decrypt`；`empty_extraction`（扫描版）→ `ocrmypdf`；`corrupt` → 重 `/paic-ingest`。详见 [troubleshooting.md](troubleshooting.md)
-- **Host 模式**：当订阅复用启用时由主对话生成、零外部 LLM 调用，详见 [configuration.md](configuration.md#host-orchestration订阅复用零外部-llm-调用)
+- **Host 模式**：当订阅复用启用时由主对话生成、零外部 LLM 调用，详见 [configuration.md](configuration.md#host-orchestration)
 
 ---
 

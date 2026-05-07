@@ -1,21 +1,14 @@
-# Host orchestration
+# Host orchestration internals
 
-When a routing node resolves to the `host` sentinel backend, PAI-C does **not**
-call any LLM itself. Instead the main Claude Code conversation (the "host") does
-the LLM work, and the Skill layer ferries the result back to PAI-C via a
-follow-up MCP tool call.
+> **Internal** · 开发者视角 —— directive schema / sync vs in-graph flow / 实现新 host-aware 节点。
+> 用户配置（何时用 / yaml 模板 / 决策树）见 [configuration-cookbook.md § Host orchestration 配置](configuration-cookbook.md#host-orchestration-配置)；节点白名单见 [configuration.md § 节点路由表](configuration.md#节点路由表) 「host-aware」列。
 
-This unblocks two scenarios:
+## Coverage
 
-1. **Zero-API-key projects** — the host already has Claude credentials; PAI-C
-   tools work without provisioning a separate `ANTHROPIC_API_KEY` /
-   `OPENAI_API_KEY`.
-2. **Tighter user-in-the-loop control** — every host-routed step shows up as a
-   visible main-conversation message, so the user can edit / nudge before the
-   structured output is persisted.
-
-All routing nodes can be configured to `host` (`routing.default: host` or
-`routing.overrides.<node>: host`). The mechanism comes in two flavours:
+21 of the 25 LLM-call nodes are host-aware. Routing them to `host`
+(`routing.default: host` or `routing.overrides.<node>: host`) returns a
+directive instead of calling the cloud LLM. The mechanism comes in two
+flavours:
 
 - **Synchronous MCP-tool nodes** return the host directive directly from the
   tool call. The Skill calls a companion `*_persist` tool to save the host's
@@ -25,6 +18,13 @@ All routing nodes can be configured to `host` (`routing.default: host` or
   `interrupt(...)` and resume when the Skill calls `*_step` / `*_resume` with a
   `host_response={...}` payload. The graph's checkpoint persists the directive
   so resumes are durable across crashes.
+
+The 4 cloud-only nodes (`claim_judge` / `paragraph_outline` / `paragraph_write`
+/ `section_coherence_polish`) skip the `is_host_orchestrated` check and call
+`llm.complete*` directly — routing them to `host` raises
+`HostOrchestrationRequired` at first invocation. `paic doctor` rejects this
+configuration at startup via `RoutingConfig.invalid_host_overrides` against the
+`HOST_SUPPORTED_NODES` whitelist in `src/paic/config.py`.
 
 ## Directive schema
 

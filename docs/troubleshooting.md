@@ -209,7 +209,7 @@ providers:
 
 ### Host orchestration 排错
 
-启用了 `routing.overrides.summarize: host`（详见 [configuration.md → Host Orchestration](configuration.md#host-orchestration订阅复用零外部-llm-调用)）后的常见问题：
+启用了 `routing.overrides.<node>: host`（详见 [configuration.md → Host Orchestration](configuration.md#host-orchestration) 与 [configuration-cookbook.md § Host orchestration 配置](configuration-cookbook.md#host-orchestration-配置)）后的常见问题：
 
 **`paic doctor` 没看到 `host orchestration` 一行**
 
@@ -237,9 +237,10 @@ uv run python scripts/install_skills.py
 
 让 Claude 按 `schema_hint` 重新生成。连续两次失败 → 临时切回非 host 模式（API 模式的 prompt 约束更强）。
 
-**Review 节点在 host 模式下报错**
+**节点报 `HostOrchestrationRequired`**
 
-设计上 review 不支持 host orchestration。配置 `routing.overrides.summarize: host` 时 review 走 `routing.default`（建议设成 `anthropic.claude_agent_sdk` 复用订阅）。若把 `routing.default: host`：review_start 会抛 `HostOrchestrationRequired`——把 default 改回 `anthropic` 或具体 backend。
+`paic doctor` 在启动期会校验 `routing.overrides` 中所有 `host` 目标——只有 21 个 host-aware 节点合法（见 [configuration.md § 节点路由表](configuration.md#节点路由表)「host-aware」列）。4 个 cloud-only 节点 `claim_judge` / `paragraph_outline` / `paragraph_write` / `section_coherence_polish` 路由到 `host` 会在 graph 跑到时抛 `HostOrchestrationRequired`。
+修复：把这些节点改回云端 backend（`anthropic` / `openai` / 命名 profile）；或不要 `routing.default: host` —— 用 `overrides` 显式覆盖具体节点。
 
 **主对话 context 撑不住 17 篇全文**
 

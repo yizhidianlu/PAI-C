@@ -36,6 +36,7 @@
 |---|---|
 | [updating.md](updating.md) | `git pull` 后让改动生效 — 按改动类型决定 `install_skills` / `register_mcp` / 重启顺序。 |
 | [troubleshooting.md](troubleshooting.md) | `paic doctor` 输出报错时的修复路径、运行时错误目录、`/paic-finalize` 失败排查。 |
+| [host-orchestration-internals.md](host-orchestration-internals.md) | **Internal** · 开发者视角 — host directive schema、sync vs in-graph flow、实现新 host-aware 节点。普通用户读 cookbook 即可。 |
 
 ### Optional integrations
 

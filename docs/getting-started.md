@@ -97,7 +97,7 @@ routing:
     summarize: host                # summarize 走主对话，零 LLM 调用
 ```
 
-详见 [configuration.md → Host Orchestration](configuration.md#host-orchestration订阅复用零外部-llm-调用)。
+详见 [configuration.md → Host Orchestration](configuration.md#host-orchestration)。
 
 ### 4D — 第三方 OpenAI 兼容中转站
 
