@@ -118,21 +118,21 @@ claude mcp add zotero zotero-mcp -e ZOTERO_LOCAL=true
 
 进任意 PAI-C 项目跑一次 ingest：
 
-```
+```text
 /paic-search motor imagery EEG
 ingest 1, 2, 3
 ```
 
 ingest 跑完最后，**SKILL 应该会问一句**：
 
-```
+```text
 检测到 zotero-mcp。本批 3 篇要同步到 Zotero 吗？(y/n，默认 n)
 默认 collection: paic-ingest-<YYYYMMDD>
 ```
 
 回 `y` → SKILL 调 `zotero_create_collection` + 逐篇 `zotero_add_by_doi`/`add_by_url`/`add_from_file`，最后渲染同步报告：
 
-```
+```text
 同步成功 3/3 篇（collection: paic-ingest-20260506）
 ```
 

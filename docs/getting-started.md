@@ -209,19 +209,19 @@ mkdir ~/papers/long-context-medical && cd ~/papers/long-context-medical
 
 在该目录启动 Claude Code，依次输入：
 
-```
+```text
 /paic-init 方向：long-context attention 在医学影像报告生成；目标 NeurIPS 2027。
 ```
 
-```
+```text
 /paic-search 近两年 long-context transformer 在长文本摘要 / 医学报告生成的代表性工作。
 ```
 
-```
+```text
 ingest 第 1, 3, 7 篇。
 ```
 
-```
+```text
 /paic-summarize all
 ```
 
@@ -237,7 +237,9 @@ ingest 第 1, 3, 7 篇。
 
 ## 下一步
 
-- 完整流水线：[workflow.md](workflow.md)
+- 端到端工作流：[workflow.md](workflow.md)
+- Paper-quality 写作链路（`/paic-paper-plan` 锁论点、claim ledger、paragraph compose、related-work 聚类、revision 队列）：[paper-plan.md](paper-plan.md)
+- 提交前一致性检查（`/paic-finalize` 8 类）：[quality-gate.md](quality-gate.md)
 - `~/.paic/config.yaml` 全字段：[configuration.md](configuration.md)
 - `git pull` 后生效：[updating.md](updating.md)
 - 故障排查：[troubleshooting.md](troubleshooting.md)

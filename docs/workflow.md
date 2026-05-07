@@ -1,4 +1,4 @@
-# 完整工作流：9 步从空目录到 LaTeX 骨架
+# 端到端工作流
 
 <p align="center">
   <img src="paic-workflow.png" alt="PAI-C workflow" width="900">
@@ -10,11 +10,13 @@
 
 每步给出：**调用方式** + **`.paic/` 产出位置** + **典型耗时** + **路由 node**。
 
+> 本文描述常规 9 步主链。Paper-quality 高级阶段（paper_plan / claims / paragraph compose / clusters / revisions / quality gate）见 [paper-plan.md](paper-plan.md) 与 [quality-gate.md](quality-gate.md)，并在文末「Paper-quality 高级阶段」节有简表。
+
 ---
 
 ## 1. `/paic-init` — 建项目
 
-```
+```text
 /paic-init 方向：long-context attention 在医学影像报告生成；目标 NeurIPS 2027。
 ```
 
@@ -28,7 +30,7 @@
 
 ## 2. `/paic-search <query>` — 多源检索
 
-```
+```text
 /paic-search 近两年 long-context transformer 在长文本摘要 / 医学报告生成的代表性工作。
 ```
 
@@ -36,15 +38,7 @@
   - `mcp__arxiv__search_papers` + `mcp__arxiv__semantic_search`（arXiv）
   - `mcp__paic__paic_s2_search`（Semantic Scholar；客户端 0.95 req/s 限速）
 - **去重**：DOI / arxiv_id 主键 + 标题 fuzzy（threshold 0.92）
-- **section-aware retrieval**（compose 阶段）：当 library > 40 篇时，`/paic-draft compose` 自动用 BM25 + MMR 按 section 检索 top-40 而非按 selected.yaml 顺序截断；query 由 paper_plan 的 thesis / 当前 section 的 intent / idea / experiment 自动拼装。直接调 `paic_library_retrieve` 也能拿到 ranked hits + match_reason。
-- **claim ledger**：每次 compose 跑完自动把段落里的 strong claim（novelty / comparative / numeric / result）抽出来落到 `.paic/plans/claims.yaml`。`/paic-draft compose` 输出末尾会列出 needs_evidence 的强声明。`paic_claims_validate` 跨 claim 检查 cite_key / experiment_id / 强声明无支持的问题。
-- **experiment plan 验证切面**（phase 5）：`/paic-experiment` 跑完后插入一个程序化 `verify_plan` 节点，检查 baseline 是否带 paper_ref / dataset 是否带 license + splits / metric 是否恰好一个 primary / ablation 每轴 ≥2 levels / compute_budget / statistical_plan / reproducibility 都填了。Soft warnings 落 `experiment.yaml` 的 `validation_warnings`，SKILL 渲染时一行一条提示。
-- **paragraph-level compose**（phase 6，opt-in `mode="paragraph"`）：把 section 的生成拆成 outline → write per paragraph → coherence polish 三步。比 `from_stub` 慢（N+2 次 LLM call）但长 section 重复短语少、各段绑 claim_ids + cite_key 候选、轨迹可追。强烈建议在 paper_plan + claims 齐全时跑长 section（intro / related / experiments）。
-- **related-work clustering**（phase 7）：`paic_related_work_cluster` 单 LLM call 把 library 分 3-5 群（按 method / dataset / task / limitation / contribution_type），每群一个 contrast_to_proposed。落 `.paic/plans/related_work_clusters.yaml`。`paragraph` 模式 compose 02_related 时自动消费——每群一段，开头点 cluster label + 写明 contrast。
-- **revision queue**（phase 8）：`/paic-review` 跑完后调 `paic_revision_extract` 把 moderator + persona 评论拆成离散 RevisionTask（severity / target_kind / target_ref / patch_hint），落 `.paic/revisions/<round>_<id>.yaml`。`paic_revision_list` / `_apply` / `_resolve` 让多轮 review 间能跨轮跟踪解决进度。
-- **claim-driven figure planning**（phase 9）：`paic_figure_plan` 现在把每个 slot 绑 supporting_claims（contribution / claim id 列表），并用 `verify_claim_coverage` 检查每个 contribution 至少有一个 figure / table / algorithm 绑定，否则要求显式 `no_visual_reason`。结果记 `_plan.yaml.coverage_warnings`。
-- **final quality gate**（phase 10）：`/paic-finalize` 跑 8 类 paper-level 检查（undefined cites/refs / unresolved TODOs / duplicate paragraphs (rapidfuzz>0.85) / contribution 一致性 / section 长度平衡 / unsupported strong claims / numeric provenance / opt-in LaTeX compile）。返回 issues 列表 + actionable_fix；`overrides=[kind]` 跳过用户已显式接受的类别。
-- **强制召回校验**（dedupe 之后、渲染表格之前）：Skill 从 topic + 选用的 query 变体里抽 2-4 个 `core_terms`（英文短语），调 `paic_search_recall_check` 把召回池按 title 命中数分四桶（`tier1_strict` / `tier1_loose` / `tier2_partial` / `tier3_others`）。最终表格分两段渲染——「强相关·标题命中核心词」和「其他召回」——避免长召回池里标题明确含核心词的论文被注意力筛掉。`tier1_min=5` 兜底：T1 不足时从 T2 按命中数降序补到下限。
+- **强制召回校验**：dedupe 之后、渲染表格之前，SKILL 从 topic + 选用的 query 变体里抽 2-4 个 `core_terms`（英文短语），调 `paic_search_recall_check` 把召回池按 title 命中数分四桶。最终表格分两段渲染（「强相关·标题命中核心词」和「其他召回」），避免长召回池里标题明确含核心词的论文被注意力筛掉。
 - **产出**：返回候选表（不落盘；`/paic-ingest` 才入库）
 - **耗时**：5–15 秒，取决于 query 复杂度
 - **缓存**：S2 响应缓存到 `~/.paic/cache/s2/<sha>.json`，永不过期；绕过缓存传 `force=true`
@@ -53,7 +47,7 @@
 
 输入为 **broad topic**（1–3 词、纯概念词、含中文）时，Skill 先生成 5–6 个英文检索词变体供选择：
 
-```
+```text
 基于「diffusion video」候选 6 个检索词变体（默认 #1）：
   1. diffusion model video generation       (直接)
   2. latent diffusion video synthesis       (技术)
@@ -74,7 +68,7 @@
 
 ## 3. `/paic-ingest <ids>` — 入库 + 下载
 
-```
+```text
 ingest 第 1, 3, 7 篇。
 ```
 
@@ -94,7 +88,7 @@ ingest 第 1, 3, 7 篇。
 
 ## 4. `/paic-summarize [id|all]` — 结构化摘要
 
-```
+```text
 /paic-summarize all
 ```
 
@@ -112,7 +106,7 @@ ingest 第 1, 3, 7 篇。
 
 ## 5. `/paic-ideate [focus]` — 生成 idea（含用户筛选）
 
-```
+```text
 /paic-ideate focus 在 "如何不堆 KV cache 扩到 200k token"，给出 8 个 idea。
 ```
 
@@ -133,7 +127,7 @@ ingest 第 1, 3, 7 篇。
 
 ## 6. `/paic-experiment <idea_id>` — 实验方案
 
-```
+```text
 /paic-experiment 选评分最高的 idea，约束：单张 A6000、3 周内完成。
 ```
 
@@ -146,7 +140,7 @@ ingest 第 1, 3, 7 篇。
 
 ## 7. `/paic-review <experiment_id>` — 4-persona 多轮评审
 
-```
+```text
 /paic-review 跑 2 轮 4-persona 评审。
 ```
 
@@ -180,7 +174,7 @@ ingest 第 1, 3, 7 篇。
 
 ### 8.1 fill — 模板填充（v0.1）
 
-```
+```text
 /paic-draft fill 用 NeurIPS 模板，基于刚 verdict 的 idea + experiment 起骨架。
 ```
 
@@ -193,7 +187,7 @@ ingest 第 1, 3, 7 篇。
 
 ### 8.2 polish — 段落级 LLM 重写（v0.2）
 
-```
+```text
 /paic-draft polish 01_intro --mode tighten
 /paic-draft polish 03_method --mode expand     # 把 fill 留下的 TODO 占位扩写完整
 /paic-draft polish 02_related --mode formalize --instruction "用第三人称"
@@ -208,7 +202,7 @@ ingest 第 1, 3, 7 篇。
 
 ### 8.3 compose — 整段生成 + 引用对齐（v0.3）
 
-```
+```text
 /paic-draft compose 02_related --mode from_stub
 /paic-draft compose 01_intro --mode from_scratch --target-words 800
 ```
@@ -222,17 +216,17 @@ ingest 第 1, 3, 7 篇。
 
 **典型流程**：fill → compose（写出含真实引用的段落）→ polish（细调措辞）。
 
-> 里程碑见 [README → Status](../README.md#status)。
+`compose` 还有第 3 模式 `paragraph`（outline → write → polish 三步），适合长 section（intro / related / experiments），需 `paper_plan + claims` 齐全。详见 [paper-plan.md § 4](paper-plan.md)。
 
 ---
 
-## 9. `/paic-figure <stage>` — 论文配图（Phase 1 raster）
+## 9. `/paic-figure <stage>` — 论文配图（raster）
 
 启用前置：`providers.images.enabled: true`，详见 [configuration.md → images](configuration.md#images-paic-figure)。
 
 ### 9.1 plan — 提议图位
 
-```
+```text
 /paic-figure plan
 ```
 
@@ -243,7 +237,7 @@ ingest 第 1, 3, 7 篇。
 
 ### 9.2 generate — 渲染图片
 
-```
+```text
 /paic-figure generate teaser
 ```
 
@@ -253,7 +247,7 @@ ingest 第 1, 3, 7 篇。
 
 ### 9.3 edit / variant — 改图
 
-```
+```text
 /paic-figure edit teaser "调暗整体色调，增加海洋元素"
 /paic-figure variant teaser n=2
 ```
@@ -274,13 +268,13 @@ ingest 第 1, 3, 7 篇。
 
 下次启动 Claude Code，第一句：
 
-```
+```text
 /paic-resume
 ```
 
 列出 paused / awaiting_input 的 run。继续指定 run：
 
-```
+```text
 /paic-resume 01HX8K... rebuttal："针对 issue #1，..."
 ```
 
@@ -290,7 +284,7 @@ ingest 第 1, 3, 7 篇。
 
 ## 状态查看
 
-```
+```text
 /paic-status
 ```
 
@@ -298,11 +292,31 @@ ingest 第 1, 3, 7 篇。
 
 ---
 
+## Paper-quality 高级阶段
+
+主链 9 步之外，PAI-C 提供一组 opt-in **paper-quality** 工具把「散点式生成 → 一致性论文」串起来。完整教程见 [paper-plan.md](paper-plan.md) 与 [quality-gate.md](quality-gate.md)；以下是简表。
+
+| 工具 / 命令 | 作用 | 文档 |
+|---|---|---|
+| `/paic-paper-plan` | 生成 / 更新 `paper_plan.yaml`：thesis、contributions、section_plan、terminology、symbols | [paper-plan.md § 1](paper-plan.md) |
+| `paic_claims_init` / `_extract` / `_validate` | 强声明 ledger（compose / polish 自动 extract；validate 跨 claim 检查支持） | [paper-plan.md § 2](paper-plan.md) |
+| `paic_library_retrieve` | BM25 + MMR section-aware 检索；library > 40 篇时 compose 自动启用 | [paper-plan.md § 3](paper-plan.md) |
+| `/paic-draft compose --mode paragraph` | outline → write → polish 三步 pipeline，长 section 一致性更好 | [paper-plan.md § 4](paper-plan.md) |
+| `paic_related_work_cluster` | library 分 3-5 群；`compose 02_related` 自动一群一段 + contrast | [paper-plan.md § 5](paper-plan.md) |
+| `paic_revision_extract` / `_list` / `_apply` / `_resolve` | review 评论转 RevisionTask，跨轮跟踪 | [paper-plan.md § 6](paper-plan.md) |
+| `paic_figure_plan`（claim 绑定增强） | 每个 contribution 必须有图 / 表 / 算法绑定或 `no_visual_reason` | [paper-plan.md § 5](paper-plan.md) |
+| `/paic-finalize` | 提交前 8 类 paper-level 检查 + overrides | [quality-gate.md](quality-gate.md) |
+
+**典型嵌入位置**：`/paic-experiment` 之后跑 `/paic-paper-plan`；`/paic-review` 后调 `paic_revision_extract` 落 task；`/paic-related-work-cluster` 后再 `/paic-draft compose --mode paragraph 02_related`；提交前 `/paic-finalize`。
+
+---
+
 ## 端到端串接
 
-```
+```text
 方向：transformer 在脑电信号自动诊断。请按 init → search → ingest → summarize
-→ ideate → experiment → review → draft fill → figure plan 串起来，每个用户 checkpoint 暂停等我。
+→ ideate → experiment → paper-plan → review → draft fill → compose paragraph
+→ figure plan → finalize 串起来，每个用户 checkpoint 暂停等我。
 ```
 
 Claude 自行按顺序串接 skill。

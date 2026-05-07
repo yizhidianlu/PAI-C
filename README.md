@@ -15,8 +15,9 @@ PAI-C runs the STEM paper workflow inside Claude Code — search and ingest lite
 - **Search & ingest** — arXiv + Semantic Scholar by default, 20+ optional platforms via `paper-search-mcp`. Title/DOI/arXiv dedupe, project-local PDF archive, structured summaries.
 - **Ideate** — multi-round ideation grounded on the ingested library, scored by a 4-persona panel (methodology / novelty / impact / Reviewer-2) with score memoization across rounds.
 - **Experiment design + multi-agent review** — schema-validated experiment plans, then a 4-persona LangGraph review (methodology / statistics / domain / Reviewer-2) with moderator synthesis and final verdict.
-- **LaTeX writing** — three-stage pipeline (`fill` / `polish` / `compose`) with built-in `cvpr` / `neurips` / `ieee` templates and per-project venue customization.
-- **Multi-backend routing** — 4 LLM backends (Anthropic API, Claude Agent SDK subscription, OpenAI, OpenAI-compatible relays). Each of ~15 LLM call sites is independently routable; `summarize` / `draft_polish` / `draft_compose` can run on the main Claude Code conversation via the `host` route.
+- **LaTeX writing** — three-stage pipeline (`fill` / `polish` / `compose`) with built-in `cvpr` / `neurips` / `ieee` templates and per-project venue customization. Optional paragraph-mode compose (outline → write → polish) for long sections.
+- **Paper-quality preflight** — `/paic-paper-plan` locks the global thesis + contribution list + per-section intent; an automatic claim ledger tracks every strong assertion with cite / experiment provenance; `/paic-finalize` runs 8 paper-level checks before submission. See [`docs/paper-plan.md`](docs/paper-plan.md) and [`docs/quality-gate.md`](docs/quality-gate.md).
+- **Multi-backend routing** — 4 LLM backends (Anthropic API, Claude Agent SDK subscription, OpenAI, OpenAI-compatible relays). Each of ~20 LLM call sites is independently routable; `summarize` / `draft_polish` / `draft_compose` can run on the main Claude Code conversation via the `host` route.
 - **Durable runs** — LangGraph state checkpointed to SQLite; long-running ideation and review survive across Claude Code restarts.
 
 ---
@@ -62,8 +63,11 @@ Full reference: [`docs/configuration.md`](docs/configuration.md). Validate with 
 | `/paic-summarize [id\|all]` | Structured summaries of selected papers |
 | `/paic-ideate [focus]` | Generate and score research ideas |
 | `/paic-experiment <idea_id>` | Design an experiment plan |
-| `/paic-review <experiment_id>` | 4-persona multi-round review |
-| `/paic-draft <stage>` | LaTeX writing: `fill` / `polish` / `compose` |
+| `/paic-paper-plan` | Lock the global paper plan: thesis, contributions, section intent, terminology |
+| `/paic-review <experiment_id>` | 4-persona multi-round review; output auto-converts to a tracked revision queue |
+| `/paic-draft <stage>` | LaTeX writing: `fill` / `polish` / `compose` (with optional `--mode paragraph`) |
+| `/paic-figure <stage>` | Plan / generate raster figures (teaser / concept / domain), claim-bound |
+| `/paic-finalize` | Paper-level preflight: 8 checks before submission |
 | `/paic-resume [run_id]` | List or resume interrupted runs |
 | `/paic-status` | Project overview |
 

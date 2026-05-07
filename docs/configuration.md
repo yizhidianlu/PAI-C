@@ -93,7 +93,7 @@ providers:
 
 `paic doctor` 会显示当前生效配置：
 
-```
+```text
 [OK ]  arxiv pacing                   batch=1 | delay=6.0s | upstream_throttling=unenforced
 ```
 
@@ -165,7 +165,7 @@ providers:
 
 > JSON mode 在不同代理支持度不一；backend 失败会自动 fallback 到通用 ` ```json fence ` 解析。
 
-#### 第三方中转站（如 mytoken.top）
+**第三方中转站（如 mytoken.top）**
 
 国内常见做法：用第三方 API 中转站（mytoken.top / closeai / etc.）拿一个统一 sk-* key，按 OpenAI 兼容协议接 PAI-C。配方：
 
@@ -195,7 +195,7 @@ routing:
 - **JSON mode 不可靠**：中转站的模型对 `response_format=json_object` 支持度不一致。PAI-C 已有 ```json fence` 解析兜底，但如果某节点（特别是 review 的 4 persona）反复 schema 校验失败，把它单独 override 回 `anthropic.api_key` 或切到 `host`。
 - **OpenAI 协议不带 Anthropic prompt caching**：走 OpenAI 兼容协议时，PAI-C 不会发 `cache_control: ephemeral`。4-persona review 每轮都要重发 persona system prompt，token 用量比直连 Anthropic 高约 30%。
 
-#### 通过 Anthropic 格式接入（可保留 prompt caching）
+**通过 Anthropic 格式接入（可保留 prompt caching）**
 
 如果中转站同时暴露 Anthropic SDK 兼容路径（mytoken.top 的 `https://mytoken.top/` 根路径就是这种），可以直接走 PAI-C 的 `anthropic.api_key` backend，token 与 cache_control 全部保留：
 
@@ -346,7 +346,7 @@ routing:
 
 跑 `uv run paic info` 验证：
 
-```
+```text
 routing default    : anthropic
 routing overrides:
   summarize                            → openai

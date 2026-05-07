@@ -77,7 +77,7 @@ uv run paic doctor
 
 应看到：
 
-```
+```text
 overleaf sync                ok      enabled=true | target_root=C:\Users\<you>\Dropbox\Apps\Overleaf | strategy=keep_both | prompt_on_delete=True
 ```
 
@@ -89,13 +89,13 @@ overleaf sync                ok      enabled=true | target_root=C:\Users\<you>\D
 
 进任意 PAI-C 项目目录（如 `C:\Users\<you>\Desktop\my_paper`），跑 LaTeX 阶段：
 
-```
+```text
 /paic-draft fill --template neurips ...
 ```
 
 `fill` 跑完，SKILL 会问：
 
-```
+```text
 检测到 Overleaf 配置。要把 drafts/ 同步到 Overleaf 吗？
 目标：~/Dropbox/Apps/Overleaf/my_paper/
 即将 push: 5 个文件（main.tex, refs.bib, sections/01_intro.tex, ...）
@@ -110,13 +110,13 @@ overleaf sync                ok      enabled=true | target_root=C:\Users\<you>\D
 
 在 Overleaf 网页编辑 `sections/01_intro.tex`（或上传图片到 `figures/`），保存。回到本地跑：
 
-```
+```text
 /paic-draft polish ...
 ```
 
 或下次任何 `/paic-draft` 跑完，SKILL 会先做一次 `dry_run` 同步，显示：
 
-```
+```text
 sync 预览（dry_run）：
   pulled: 1 (sections/01_intro.tex)
   pushed: 0

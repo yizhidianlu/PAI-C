@@ -8,7 +8,7 @@ PAI-C 内置了 3 个 venue 模板：`cvpr` / `neurips` / `ieee`。若的目标�
 
 PAI-C 提供 `paic_draft_scaffold` MCP 工具，从内置模板派生一个起点：
 
-```
+```text
 你: /paic-draft 帮我准备一个 ICLR 2026 模板
 Claude: （检测到没有 iclr2026 模板）我可以基于内置 neurips 给你 scaffold 一个：
 你: 好
@@ -37,7 +37,7 @@ Claude: → mcp__paic__paic_draft_scaffold(name="iclr2026", base="neurips")
 
 从 venue 官网下载模板包后，把里面的 `.sty` / `.cls` / `.bst` 文件**复制到** `.paic/templates/iclr2026/`：
 
-```
+```text
 .paic/templates/iclr2026/
 ├── main.tex.j2                      # ← 你刚改完的 jinja 骨架
 ├── template.yaml
@@ -51,13 +51,13 @@ Claude: → mcp__paic__paic_draft_scaffold(name="iclr2026", base="neurips")
 
 ### Step 3：Fill
 
-```
+```text
 你: /paic-draft fill iclr2026 idea_id=01HX...
 ```
 
 输出：
 
-```
+```text
 [OK] template=iclr2026 (kind=user)
 main.tex:    drafts/main.tex
 refs.bib:    drafts/refs.bib  (3 BibTeX 项)
@@ -72,7 +72,7 @@ sections:    6 个文件（drafts/sections/00_abstract.tex ...）
 
 若希望**完全自主**而不是 scaffold 派生，可以手建目录：
 
-```
+```text
 mkdir -p .paic/templates/myvenue
 ```
 
@@ -152,7 +152,7 @@ description: Anonymous-by-default; uses myvenue_style.sty
 
 ## 完整目录结构
 
-```
+```text
 <project>/.paic/templates/iclr2026/
 ├── main.tex.j2                  # 必需 — jinja 骨架
 ├── template.yaml                # 可选 — 元数据
@@ -169,13 +169,13 @@ description: Anonymous-by-default; uses myvenue_style.sty
 
 | 文件 | 行为 |
 |---|---|
-| `*.sty` / `*.cls` / `*.bst` | ✅ 复制到 `drafts/` |
-| `*.pdf` / `*.png` / `*.jpg` / `*.eps` | ✅ 复制到 `drafts/`（保留子目录） |
-| `main.tex.j2` / `*.j2` / `*.jinja` | ❌ 不拷（jinja 模板，分别渲染） |
-| `template.yaml` | ❌ 不拷（元数据） |
-| `main.tex` | ⚠️ 跳过（PAI-C 自己生成）；`static_assets_skipped` 会报 |
-| `refs.bib` | ⚠️ 跳过（PAI-C 从 `library/selected.yaml` 自己生成）；同上 |
-| `sections/*.tex` | ⚠️ 跳过（PAI-C 渲染）；同上 |
+| `*.sty` / `*.cls` / `*.bst` | ✓ 复制到 `drafts/` |
+| `*.pdf` / `*.png` / `*.jpg` / `*.eps` | ✓ 复制到 `drafts/`（保留子目录） |
+| `main.tex.j2` / `*.j2` / `*.jinja` | ✗ 不拷（jinja 模板，分别渲染） |
+| `template.yaml` | ✗ 不拷（元数据） |
+| `main.tex` | ⚠ 跳过（PAI-C 自己生成）；`static_assets_skipped` 会报 |
+| `refs.bib` | ⚠ 跳过（PAI-C 从 `library/selected.yaml` 自己生成）；同上 |
+| `sections/*.tex` | ⚠ 跳过（PAI-C 渲染）；同上 |
 
 ## 命名冲突
 
@@ -198,7 +198,7 @@ description: Anonymous-by-default; uses myvenue_style.sty
 
 ## 列出所有模板
 
-```
+```text
 你: /paic-draft 列一下当前所有可用模板
 Claude: → mcp__paic__paic_draft_list_templates(project_dir=<cwd>)
 

@@ -64,7 +64,7 @@ uv run paic doctor
 
 应有：
 
-```
+```text
 [OK ] external search   enabled=true | preset=interdisciplinary | max_results=10 | upstream_throttling=per-platform
 ```
 
@@ -74,7 +74,7 @@ uv run paic doctor
 
 `/paic-init` 在 multi-platform 模式下会主动询问研究领域：
 
-```
+```text
 你: /paic-init
 Claude: 这是个新论文项目。研究领域是哪个？
         1. cs_ml — 计算机/AI/ML
@@ -120,7 +120,7 @@ platforms:
 
 或重跑 `/paic-init` 显式给：
 
-```
+```text
 你: /paic-init platforms_override=[pubmed, biorxiv, openalex]
 ```
 

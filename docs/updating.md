@@ -24,6 +24,7 @@ uv run python scripts/install_skills.py     # 同步 SKILL.md 到 ~/.claude/skil
 | `pyproject.toml` / `uv.lock`（Python 依赖增减） | `uv sync` |
 | `src/paic/**.py`（MCP 工具 / doctor / config / graphs / latex 等） | 完全重启 Claude Code |
 | `skills/*/SKILL.md`（slash command 行为变更） | `uv run python scripts/install_skills.py` + 重启 |
+| `skills/<新 skill 目录>/`（新增 SKILL，例如 `paic-paper-plan/` / `paic-finalize/`） | `uv run python scripts/install_skills.py` + 重启 |
 | `src/paic/mcp_server/server.py` 新增 `@mcp.tool()` 或工具签名变更 | `uv run python scripts/register_mcp.py` + 重启 |
 | `~/.paic/config.yaml`（用户修改 yaml） | 重启 Claude Code（config 在 server 启动时读取） |
 | `docs/*.md` / `README.md` / `CLAUDE.md` | 无需动作 |

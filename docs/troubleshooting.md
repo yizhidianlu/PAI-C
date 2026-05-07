@@ -318,13 +318,13 @@ Google 反爬太严，无 proxy 时容易被封。两条路：
 
 ### LangGraph run 卡住 / 永远 awaiting_input
 
-```
+```text
 /paic-resume
 ```
 
 列出所有 paused run。如果某个 run 你不想继续：
 
-```
+```text
 /paic-resume <run_id>
 然后告诉 Claude "cancel this run"
 ```
@@ -342,6 +342,22 @@ Google 反爬太严，无 proxy 时容易被封。两条路：
 ### 改了 `~/.paic/config.yaml` 不生效
 
 MCP server 不会热加载 config。**完全退出 Claude Code 再开**。重启之间可跑 `uv run paic info` 验证 yaml 自身解析正确。
+
+---
+
+## `/paic-finalize` 失败排查
+
+`/paic-finalize` 跑 8 类 paper-level 检查（详见 [quality-gate.md](quality-gate.md)）。常见症状：
+
+| 症状 | 处理 |
+|---|---|
+| `passed=true` 但 issue_count 非零 | 正常，info / minor 不计入 passed 判定 |
+| 大量 `unsupported_claims` | 跑 `/paic-draft compose` 让 claims.yaml 留下来；或手改 status / 加 supporting |
+| `contribution_consistency` 误报 | abstract / intro / conclusion 用 `\begin{itemize}` 显式列贡献，让计数器准 |
+| `numeric_provenance` 把版本号也算 | 那条 claim 改 `type=factual` 或 status=rejected |
+| 想跳过某类 | `paic_quality_gate_run(overrides=["unresolved_todos"])`；持久化要改源数据 |
+
+完整 8 类 + override 决策树见 [quality-gate.md](quality-gate.md)。
 
 ---
 
