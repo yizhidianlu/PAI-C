@@ -26,7 +26,7 @@ from paic.llm.prompts import load_prompt
 from paic.workspace.paths import ProjectPaths
 from paic.workspace.store import load_yaml
 
-VALID_MODES: tuple[str, ...] = ("from_stub", "from_scratch")
+VALID_MODES: tuple[str, ...] = ("from_stub", "from_scratch", "paragraph")
 
 # Cap library context at 40 papers. Prompts grow large fast (each entry ~150
 # chars + summary), and most projects have ≤30 selected papers anyway. When
@@ -395,21 +395,71 @@ def compose_section(
         except LLMUnavailable as exc:
             return {"error": "llm_unavailable", "detail": str(exc)}
 
-    try:
-        response = llm.complete(
-            system=system_prompt,
-            user=user_prompt,
-            max_tokens=4096,
-            temperature=0.4,
-            node="draft_compose",
-        )
-    except Exception as exc:
-        from paic.llm.backends.base import LLMUnavailable
-        if isinstance(exc, LLMUnavailable):
-            return {"error": "llm_unavailable", "detail": str(exc)}
-        raise
-
-    composed = strip_markdown_fence(response.text).strip() + "\n"
+    if mode == "paragraph":
+        # §quality phase 6 — outline → write → polish pipeline.
+        from paic.latex.paragraph_compose import compose_section_paragraphs
+        from paic.library.claims import load_ledger
+        from paic.library.retrieval import LibraryRetriever, build_query
+        retriever = LibraryRetriever.build(paths)
+        retrieval_hits: list[dict[str, Any]] = []
+        if len(retriever) > 0:
+            query = build_query(
+                section_name,
+                paper_plan=paper_plan,
+                idea=idea,
+                experiment=experiment,
+            )
+            if query:
+                hits = retriever.retrieve(query, k=20)
+                retrieval_hits = [
+                    {
+                        "cite_key": h.cite_key,
+                        "score": h.score,
+                        "snippet": h.snippet,
+                        "title": h.paper.get("title"),
+                        "match_reason": h.match_reason,
+                    }
+                    for h in hits
+                ]
+        ledger = load_ledger(paths)
+        claims_dump = [c.model_dump(mode="json") for c in ledger.claims]
+        try:
+            result = compose_section_paragraphs(
+                section=section_name,
+                paper_plan=paper_plan,
+                idea=idea,
+                experiment=experiment,
+                retrieval_hits=retrieval_hits,
+                claims=claims_dump,
+                target_words=(target_words or _DEFAULT_TARGET_WORDS.get(section_name, 800)),
+                llm=llm,
+                instruction=instruction,
+            )
+        except Exception as exc:
+            from paic.llm.backends.base import LLMUnavailable
+            if isinstance(exc, LLMUnavailable):
+                return {"error": "llm_unavailable", "detail": str(exc)}
+            raise
+        composed = strip_markdown_fence(result.section_text).strip() + "\n"
+        paragraph_count = len(result.paragraphs)
+        spec_count = len(result.specs)
+    else:
+        try:
+            response = llm.complete(
+                system=system_prompt,
+                user=user_prompt,
+                max_tokens=4096,
+                temperature=0.4,
+                node="draft_compose",
+            )
+        except Exception as exc:
+            from paic.llm.backends.base import LLMUnavailable
+            if isinstance(exc, LLMUnavailable):
+                return {"error": "llm_unavailable", "detail": str(exc)}
+            raise
+        composed = strip_markdown_fence(response.text).strip() + "\n"
+        paragraph_count = 0
+        spec_count = 0
 
     report = validate_composed(composed, library_keys)
     if not report.ok:
@@ -485,6 +535,8 @@ def compose_section(
         "paper_plan_used": paper_plan is not None,
         "retrieval_used": retrieval_used,
         "claims_needs_evidence_strong": new_claims_summary,
+        "paragraph_count": paragraph_count,
+        "outline_spec_count": spec_count,
         "wrote": False,
         "backup_path": None,
     }

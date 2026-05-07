@@ -135,7 +135,10 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
 
 1. **Identify section + mode**:
    - Section: 同 polish 的 alias 解析（intro / related / method / experiments / conclusion / abstract）。
-   - Mode: 默认 `from_stub`（把当前 section 文件内容作 outline 扩写）。用户说"从头" / "fresh" / "ignore the stub" → `from_scratch`。
+   - Mode 三选一：
+     - `from_stub`（默认）：把当前 section 文件作 outline 扩写。一次 LLM call。
+     - `from_scratch`：用户说"从头" / "fresh" / "ignore the stub"。一次 LLM call。
+     - `paragraph`（**§quality phase 6**）：先生成段落 outline → 逐段写 → 一次 coherence polish。N+2 次 LLM call（N=3-6 段），更慢更贵但**长 section 不容易跑题、不容易重复短语**。`paper_plan` + `claims.yaml` 都齐全时强烈推荐。
    - **idea_id**：高度推荐——compose 主要按 idea 对齐论点。从 `paic_workspace_status` 找最新的 idea 或让用户指定。
    - **experiment_id**：method / experiments section 强烈推荐。
    - target_words：用户说"~800 字"或"intro 控制在 1 页"→ 转成 int 透传；不指定时 PAI-C 用 section 默认值。
@@ -166,6 +169,7 @@ When user says "写一段 related work" / "compose 整个 intro" / "把 method �
    - **paper_plan**：根据 `out["paper_plan_used"]` 报告「✓ 已注入 paper_plan 全局上下文」或「⚠ paper_plan 缺失 — compose 仅依赖 idea + experiment」
    - **retrieval**：根据 `out["retrieval_used"]` 报告「✓ library 超过 40 篇，已用 BM25 按 section 检索 top-40」或在 ≤40 篇时静默
    - **claims**：检查 `out["claims_needs_evidence_strong"]`。**非空**时渲染：「⚠ 发现 N 条 needs_evidence 强声明（novelty/comparative/numeric/result）— claims.yaml 已记录。」并把每条 (type, text 截前 80 字) 列出。空数组 / null 静默。建议下一步用 `/paic-status` 或 `paic_claims_validate` 查看。
+   - **paragraph mode**：当 `out["mode"] == "paragraph"` 时，多报一行 `{paragraph_count} 段（来自 {outline_spec_count} 个 outline spec）经 coherence polish`。
    - 备份位置
    - **diff 块**：把 `out["diff"]` 截断到前 30 行展示。
    - validation warnings（如有）。
