@@ -5,20 +5,21 @@ edits,variations}`` endpoints. Targeted at relays (mytoken.top, OpenRouter,
 self-hosted proxies) but works against the official ``api.openai.com`` too —
 ``base_url=None`` falls through to the SDK default.
 
-Capability matrix per model (kept here so the doctor row + tools can short-
-circuit before hitting an API):
+Capability table (informational; the API is the source of truth):
 
 ==================  ============  ========  =========
 Model               generate      edit      variant
 ==================  ============  ========  =========
-gpt-image-1         ✓             ✓         ✗
+gpt-image-1 / -2    ✓             ✓         ✗ (falls back to edit)
+dall-e-2            ✓             ✓         ✓ (native /variations)
 dall-e-3            ✓             ✗         ✗
-dall-e-2            ✓             ✓         ✓
+other / unknown     ✓             ✓         ✗ (falls back to edit) — trust the user's relay
 ==================  ============  ========  =========
 
-For Phase 1 we use ``gpt-image-1`` as the default since edit support is the
-key feature; variants are simulated by re-running ``generate`` with the same
-prompt + a small jitter clause appended.
+PAI-C does **not** maintain a model whitelist. Any model the user configures
+is trusted and passed through to ``/v1/images/...``; the only known-bad case
+PAI-C refuses upfront is ``dall-e-3`` for edit/variant (the OpenAI API has
+no ``/edits`` endpoint for it; saves a round-trip to a confusing error).
 """
 
 from __future__ import annotations
@@ -36,20 +37,19 @@ class ImageBackendUnavailable(RuntimeError):
     SDK not installed / model doesn't support requested operation)."""
 
 
-# Models that PAI-C knows how to call. Anything else is allowed but treated
-# as if it supports only ``generate`` — the relay decides; we just refuse to
-# claim edit/variant support upfront.
-#
-# ``_EDIT_CAPABLE_PREFIXES`` covers third-party relay aliases (mytoken.top
-# etc. expose names like ``gpt-image-2-4k`` / ``gpt-image-2-hd``) so we don't
-# have to enumerate every quality/size suffix the relay invents.
-_EDIT_CAPABLE_EXACT: frozenset[str] = frozenset({"gpt-image-1", "gpt-image-2", "dall-e-2"})
-_EDIT_CAPABLE_PREFIXES: tuple[str, ...] = ("gpt-image-2-",)
+# Models the OpenAI API explicitly does **not** support /edits for. Anything
+# not on this denylist is trusted (matches the LLM provider behavior — pass
+# the user's configured model name straight through to the API).
+_EDIT_DENYLIST: frozenset[str] = frozenset({"dall-e-3"})
+
+# Models that natively support the /variations endpoint. Everything else
+# falls back to /edits with an "alternative variation" instruction in
+# ``variant()`` — close enough for paper-figure refinement.
 _VARIANT_CAPABLE_EXACT: frozenset[str] = frozenset({"dall-e-2"})
 
 
 def _supports_edit(model: str) -> bool:
-    return model in _EDIT_CAPABLE_EXACT or model.startswith(_EDIT_CAPABLE_PREFIXES)
+    return model not in _EDIT_DENYLIST
 
 
 def _supports_variant(model: str) -> bool:
@@ -163,9 +163,9 @@ class OpenAICompatibleImageBackend:
         if not self.supports_edit:
             raise ImageBackendUnavailable(
                 f"model '{self._cfg.model}' does not support image edits "
-                f"(supported: {sorted(_EDIT_CAPABLE_EXACT)} "
-                f"or any model whose name starts with one of "
-                f"{list(_EDIT_CAPABLE_PREFIXES)})"
+                f"(known unsupported: {sorted(_EDIT_DENYLIST)}). Switch to a "
+                "model with /edits support — e.g. gpt-image-1 / gpt-image-2 / "
+                "dall-e-2 — or any relay-specific name your provider exposes."
             )
         client = self._ensure_client()
         # The SDK accepts file-like objects with a ``.name`` attribute so the

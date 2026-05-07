@@ -111,16 +111,36 @@ providers:
     timeout_sec: 30.0
     # rate_limit_per_sec: null                 # null = 自动（有 key=0.95，无 key=0.33）
 
-  # ---- 论文配图（opt-in，Phase 1：teaser / concept / domain raster 图）----
+  # ---- 论文配图（opt-in：teaser / concept / domain raster 图）----
   # 流程：/paic-figure plan → 用户确认 → /paic-figure generate <slot>
-  # 详见 skills/paic-figure/SKILL.md。架构图用 TikZ、结果图用 matplotlib。
+  # 架构图用 TikZ、结果图用 matplotlib——本工具不替代它们。
+  #
+  # 两种配置方式（任选其一）：
+  #
+  # (A) 直接配置 model / key / base_url：
   images:
     enabled: false                             # 改 true 才激活 /paic-figure
-    model: gpt-image-1                         # 推荐: generate + edit；dall-e-3 仅 generate
+    model: gpt-image-1                         # 任何 model 名都可（API 决定支持性）；
+                                               # dall-e-3 不支持 edit/variant
     api_key_env: OPENAI_API_KEY                # 也可 MYTOKEN_API_KEY 等中转站 key
     # base_url: https://mytoken.top/v1         # 留空走官方 api.openai.com
     size: 1024x1024                            # 1024x1024 / 1024x1536 / 1536x1024 / auto
     quality: high                              # low / medium / high / auto
+
+  # (B) 引用一个命名 LLM provider profile，复用其 model / key / base_url：
+  #     适合用同一个中转站既跑 LLM 又跑图像。
+  #
+  # providers:
+  #   openai_img:                              # 任意名字，kind 必须是 openai
+  #     kind: openai
+  #     mode: compatible
+  #     model: gpt-image-2
+  #     api_key_env: MYTOKEN_API_KEY
+  #     base_url: https://mytoken.top/v1
+  #   images:
+  #     enabled: true
+  #     provider: openai_img                   # 引用上面的 profile，自动继承字段
+  #     # 直接写在 images 下的字段会覆盖继承的（如本块的 model）
 
   # ---- 多平台论文检索（opt-in）----
   # 接入 PubMed / bioRxiv / OpenAlex / Crossref / IEEE / ACM 等 20+ 平台。

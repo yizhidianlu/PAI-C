@@ -91,8 +91,9 @@ def _check_images_backend(cfg: Config) -> Check | None:
             "warn",
             " | ".join(parts) + " — dall-e-3 cannot edit/variant",
             fix=(
-                "Switch providers.images.model to gpt-image-1 (recommended) "
-                "or dall-e-2 if you want /paic-figure edit/variant to work."
+                "Switch providers.images.model to a model with /edits support "
+                "(e.g. gpt-image-1, gpt-image-2, dall-e-2, or any relay-"
+                "specific name your provider exposes)."
             ),
         )
     return Check("images backend", "ok", " | ".join(parts))

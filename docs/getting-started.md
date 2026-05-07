@@ -150,20 +150,37 @@ providers:
 
 ### 4F — 论文配图（可选 opt-in）
 
-启用 `/paic-figure` 流程（Phase 1 raster 配图）：
+启用 `/paic-figure` 流程（raster 配图）。两种写法二选一：
+
+**直接配置**：
 
 ```yaml
 providers:
   images:
     enabled: true
-    model: gpt-image-1                       # 推荐：generate + edit；dall-e-3 仅 generate
+    model: gpt-image-1                       # 任何 model 名都行；dall-e-3 不支持 edit/variant
     api_key_env: MYTOKEN_API_KEY             # 或 OPENAI_API_KEY，按 base_url 选
     base_url: https://mytoken.top/v1         # 留空走官方 api.openai.com
     size: 1024x1024
     quality: high
 ```
 
-详见 `/paic-figure` SKILL 与 [configuration.md → images](configuration.md#images-paic-figure)。
+**引用一个命名 LLM profile**（同一中转站复用 LLM + 图像凭据）：
+
+```yaml
+providers:
+  openai_img:
+    kind: openai
+    mode: compatible
+    model: gpt-image-2
+    api_key_env: MYTOKEN_API_KEY
+    base_url: https://mytoken.top/v1
+  images:
+    enabled: true
+    provider: openai_img                     # 自动继承上面 profile 的 model/key/base_url
+```
+
+详见 [docs/config.yaml.example](config.yaml.example) 的 `images:` 段。
 
 ### 其他可选环境变量
 

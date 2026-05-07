@@ -94,8 +94,9 @@ def _backend_or_error(
             "detail": str(exc),
             "hint": (
                 "Add a providers.images block to ~/.paic/config.yaml with "
-                "enabled: true, model: gpt-image-1, base_url: <relay>, "
-                "api_key_env: <env var>. See docs/config.yaml.example."
+                "enabled: true plus either inline fields (model / api_key_env "
+                "/ base_url) or `provider: <name>` to inherit from a named "
+                "LLM profile. See docs/config.yaml.example."
             ),
         }
 
@@ -319,7 +320,11 @@ def figure_edit(
         return {
             "error": "edit_not_supported",
             "model": backend.model,
-            "hint": "Switch to gpt-image-1 or dall-e-2 in providers.images.model.",
+            "hint": (
+                f"Model '{backend.model}' has no /edits endpoint. Switch to a "
+                "model with edit support — e.g. gpt-image-1, gpt-image-2, "
+                "dall-e-2, or any relay-specific name your provider exposes."
+            ),
         }
 
     try:

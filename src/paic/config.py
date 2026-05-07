@@ -189,21 +189,29 @@ class ProviderExternalSearchConfig:
 
 @dataclass(frozen=True)
 class ProviderImagesConfig:
-    """Image generation backend (gpt-image-1 / dall-e-3 / OpenAI-compatible relays).
+    """Image generation backend (OpenAI-compatible ``/v1/images/...`` endpoints).
 
-    Conceptually parallel to the LLM providers but uses a different OpenAI
-    endpoint family (``/v1/images/{generations,edits,variations}``) so it
-    needs its own backend rather than a node tag in the LLM router.
-    Opt-in (``enabled=False`` default) — ``/paic-figure`` short-circuits
-    when disabled with a config-pointer error.
+    Conceptually parallel to the LLM providers but uses a different endpoint
+    family (``/v1/images/{generations,edits,variations}``) so it needs its
+    own backend rather than a node tag in the LLM router. Opt-in
+    (``enabled=False`` default) — ``/paic-figure`` short-circuits when
+    disabled with a config-pointer error.
 
-    ``backend='openai_compatible'`` is the only supported backend in v1;
-    set ``base_url`` to a relay (e.g. ``https://mytoken.top/v1``) or leave
-    ``None`` for official ``api.openai.com``.
+    ``backend='openai_compatible'`` is the only supported backend in v1.
+    Two ways to wire credentials:
 
-    ``model='gpt-image-1'`` is recommended (supports edits + variations);
-    ``dall-e-3`` is generation-only (edit/variant calls return
-    ``backend_does_not_support`` errors).
+    1. **Direct** — set ``model`` / ``api_key_env`` / ``base_url`` on this
+       block. Backwards-compatible.
+    2. **Reference a named provider profile** — set ``provider: <name>`` to
+       inherit ``model`` / ``api_key_env`` / ``base_url`` from
+       ``providers.<name>`` (an LLM-style named profile with
+       ``kind: openai``). Lets you reuse one relay config for both LLM calls
+       and image generation. Direct fields on this block override the
+       inherited values.
+
+    PAI-C does **not** restrict the model name — any value is trusted and
+    passed through to the API. Edit / variant operations are only refused
+    upfront for ``dall-e-3`` (documented OpenAI limitation).
     """
     enabled: bool = False
     backend: Literal["openai_compatible"] = "openai_compatible"
@@ -212,6 +220,7 @@ class ProviderImagesConfig:
     base_url: str | None = None
     size: str = "1024x1024"
     quality: str = "high"  # gpt-image-1: low|medium|high|auto
+    provider: str | None = None  # Optional reference to providers.<name>
 
 
 @dataclass(frozen=True)
@@ -592,14 +601,37 @@ def _load_provider_images(raw: dict[str, Any]) -> ProviderImagesConfig:
     block = raw.get("providers", {}).get("images") if isinstance(raw, dict) else None
     if not isinstance(block, dict):
         return ProviderImagesConfig()
+
+    # Default fallbacks. If `provider: <name>` is set, look up the named
+    # profile under `providers.<name>` and inherit model/api_key_env/base_url
+    # from it; explicit fields on `providers.images` still override.
+    default_model = "gpt-image-1"
+    default_api_key_env = "OPENAI_API_KEY"
+    default_base_url: str | None = None
+
+    provider_name = block.get("provider")
+    if isinstance(provider_name, str) and provider_name:
+        named = raw.get("providers", {}).get(provider_name)
+        if isinstance(named, dict):
+            named_model = named.get("model")
+            if isinstance(named_model, str) and named_model:
+                default_model = named_model
+            named_key_env = named.get("api_key_env")
+            if isinstance(named_key_env, str) and named_key_env:
+                default_api_key_env = named_key_env
+            named_base_url = named.get("base_url")
+            if isinstance(named_base_url, str) and named_base_url:
+                default_base_url = named_base_url
+
     return ProviderImagesConfig(
         enabled=bool(block.get("enabled", False)),
         backend=block.get("backend", "openai_compatible"),
-        model=block.get("model", "gpt-image-1"),
-        api_key_env=block.get("api_key_env", "OPENAI_API_KEY"),
-        base_url=block.get("base_url"),
+        model=block.get("model", default_model),
+        api_key_env=block.get("api_key_env", default_api_key_env),
+        base_url=block.get("base_url", default_base_url),
         size=block.get("size", "1024x1024"),
         quality=block.get("quality", "high"),
+        provider=provider_name if isinstance(provider_name, str) else None,
     )
 
 

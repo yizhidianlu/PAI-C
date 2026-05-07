@@ -172,8 +172,7 @@ def test_backend_capability_matrix():
 
 
 def test_backend_supports_gpt_image_2_family():
-    """Relay aliases (mytoken.top etc.) expose gpt-image-2 / gpt-image-2-4k /
-    gpt-image-2-hd. Treat the whole prefix family as edit-capable."""
+    """gpt-image-2 / relay-suffixed aliases all pass edit (model is trusted)."""
     from paic.config import ProviderImagesConfig
 
     for model in ("gpt-image-2", "gpt-image-2-4k", "gpt-image-2-hd", "gpt-image-2-pro-1024"):
@@ -186,15 +185,92 @@ def test_backend_supports_gpt_image_2_family():
         assert b.supports_variant is False, f"{model} should not claim native variant"
 
 
-def test_backend_unknown_model_refuses_edit():
-    """Truly unknown models stay generate-only — relay decides; we don't claim."""
+def test_backend_unknown_model_allows_edit():
+    """Unknown models are trusted (no whitelist) — relay/API decides at runtime.
+
+    Matches the LLM provider behavior: any model name configured by the user
+    is passed through. Only known-bad models (`dall-e-3`) are refused upfront.
+    """
     from paic.config import ProviderImagesConfig
 
     b = OpenAICompatibleImageBackend(
         ProviderImagesConfig(enabled=True, model="some-future-model"), api_key="x"
     )
-    assert b.supports_edit is False
+    assert b.supports_edit is True
+    # /variations endpoint stays dall-e-2-only; everything else falls back to edit.
     assert b.supports_variant is False
+
+
+def test_image_config_inherits_from_named_provider(tmp_path, monkeypatch):
+    """providers.images can reference a named LLM profile to inherit
+    model / api_key_env / base_url — keeps figure config consistent with
+    the LLM provider grammar (no separate model whitelist either)."""
+    import yaml
+
+    from paic.config import load_config, reset_config_cache
+
+    cfg_yaml = tmp_path / "config.yaml"
+    cfg_yaml.write_text(
+        yaml.safe_dump({
+            "providers": {
+                "openai_img": {
+                    "kind": "openai",
+                    "mode": "compatible",
+                    "model": "gpt-image-2",
+                    "api_key_env": "MYTOKEN_API_KEY",
+                    "base_url": "https://relay.example/v1",
+                },
+                "images": {
+                    "enabled": True,
+                    "provider": "openai_img",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path))
+    reset_config_cache()
+    cfg = load_config()
+    img = cfg.providers_images
+    assert img.enabled is True
+    assert img.model == "gpt-image-2"  # inherited
+    assert img.api_key_env == "MYTOKEN_API_KEY"  # inherited
+    assert img.base_url == "https://relay.example/v1"  # inherited
+    assert img.provider == "openai_img"
+
+
+def test_image_config_explicit_overrides_named_provider(tmp_path, monkeypatch):
+    """Explicit fields on providers.images take precedence over inherited."""
+    import yaml
+
+    from paic.config import load_config, reset_config_cache
+
+    cfg_yaml = tmp_path / "config.yaml"
+    cfg_yaml.write_text(
+        yaml.safe_dump({
+            "providers": {
+                "openai_img": {
+                    "kind": "openai",
+                    "model": "gpt-image-2",
+                    "api_key_env": "MYTOKEN_API_KEY",
+                    "base_url": "https://relay.example/v1",
+                },
+                "images": {
+                    "enabled": True,
+                    "provider": "openai_img",
+                    "model": "dall-e-2",  # override
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path))
+    reset_config_cache()
+    cfg = load_config()
+    img = cfg.providers_images
+    assert img.model == "dall-e-2"
+    assert img.api_key_env == "MYTOKEN_API_KEY"  # still inherited
+    assert img.base_url == "https://relay.example/v1"  # still inherited
 
 
 # --------------------------------------------------------------- plan tool

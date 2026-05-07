@@ -1225,9 +1225,10 @@ def paic_figure_edit(
 
     Default parent is the latest version on disk. Bumps the version with
     a ``_edit`` suffix (e.g. ``v2_edit.png``) and records the parent in
-    meta.yaml. Requires a model that supports image edits
-    (``gpt-image-1`` / ``dall-e-2``); ``dall-e-3`` returns
-    ``edit_not_supported``.
+    meta.yaml. Requires a model that supports the ``/v1/images/edits``
+    endpoint; the only model PAI-C refuses upfront is ``dall-e-3``
+    (returns ``edit_not_supported``). Any other model name is trusted and
+    passed through to the configured relay.
     """
     return figure_tools.figure_edit(
         project_dir,
@@ -1246,10 +1247,10 @@ def paic_figure_variant(
 ) -> dict[str, Any]:
     """Produce ``n`` variations of a slot's latest (or specified) version.
 
-    For ``dall-e-2`` uses the native ``/variations`` endpoint. For
-    ``gpt-image-1`` falls back to ``/edits`` with an "alternative
+    For ``dall-e-2`` uses the native ``/variations`` endpoint. For every
+    other model PAI-C falls back to ``/edits`` with an "alternative
     variation" instruction (the API has no native variations endpoint
-    for that model).
+    for those models).
     """
     return figure_tools.figure_variant(
         project_dir,
