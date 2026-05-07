@@ -26,6 +26,7 @@
 | Doc | Use it when |
 |---|---|
 | [configuration.md](configuration.md) | `~/.paic/config.yaml` 全字段 — 4 个 LLM backend / 命名 profile / host orchestration / 节流 / 多平台检索 / ideate panel diversification。 |
+| [model-presets.md](model-presets.md) | 各节点 workload 拆解 + 三档（Premium / Balanced / Frugal）模型推荐 + 可粘贴的 yaml 模板。 |
 | [config.yaml.example](config.yaml.example) | `~/.paic/config.yaml` 模板，含每段注释 — `register_mcp.py` 首次运行时 seed。 |
 | [updating.md](updating.md) | `git pull` 后让改动生效 — 按改动类型决定 `install_skills` / `register_mcp` / 重启顺序。 |
 | [troubleshooting.md](troubleshooting.md) | `paic doctor` 逐行解读、运行时错误目录、`/paic-finalize` 失败排查。 |
