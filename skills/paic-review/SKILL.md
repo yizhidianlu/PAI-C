@@ -1,7 +1,7 @@
 ---
 name: paic-review
 description: Run a multi-agent (4-persona) review on an experiment plan. Methodology / statistics / domain / Reviewer-2 each critique; a moderator agent synthesizes; the author can rebut between rounds. Use after /paic-experiment when the user wants to stress-test the plan.
-allowed-tools: mcp__paic__paic_review_start, mcp__paic__paic_review_step, mcp__paic__paic_review_status
+allowed-tools: mcp__paic__paic_review_start, mcp__paic__paic_review_step, mcp__paic__paic_review_status, mcp__paic__paic_revision_extract, mcp__paic__paic_revision_list, mcp__paic__paic_revision_apply, mcp__paic__paic_revision_resolve
 ---
 
 # /paic-review — multi-agent experiment review
@@ -37,7 +37,29 @@ This is a **multi-step** skill. Each round, the graph runs all 4 personas + a mo
    - 可改 (nice_to_fix) 列表
    - 完整 transcript 路径: `.paic/reviews/<experiment_id>/transcript.yaml`
 
-### Step 4 — what next
+### Step 4 — extract revision tasks (§quality phase 8)
+
+每完成一轮 review（含 verdict 后的 transcript），把 panel synthesis + 各 persona critique 转成可追踪的 RevisionTask 队列：
+
+```
+mcp__paic__paic_revision_extract(
+  project_dir=<cwd>,
+  review_payload={"moderator": "<panel_summary>", "critiques": {<persona>: <critique text>}},
+  round_num=<this round's index, 1-based>,
+)
+```
+
+返回 `extracted_count` + `tasks` 列表（每条 `id` / `severity` / `target_kind` / `target_ref` / `summary` / `patch_hint`）。落到 `.paic/revisions/<round>_<id>.yaml`。
+
+渲染中文 task 表格让用户挑哪些立刻处理：
+```
+| ID         | 严重 | 目标             | 概要              |
+| t_xxxxx    | blocker | section/01_intro | 缺第 3 条 contribution 的 motivation |
+```
+
+用户处理后调 `paic_revision_resolve(project_dir, task_id, resolution_summary="改了 abstract 第 2 段")`。下次 `/paic-review` 仍在 `paic_revision_list(status="open")` 看遗留项。
+
+### Step 5 — what next
 - 如果 verdict 是 `minor_revision` 或 `accept`，提示用户 "可以运行 `/paic-draft fill --template <模板>` 起 LaTeX 骨架"。
 - 如果是 `major_revision` 或 `reject`，建议 "考虑重新设计实验或回到 `/paic-ideate` 选另一条 idea"。
 

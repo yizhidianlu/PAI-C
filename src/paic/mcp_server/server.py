@@ -24,6 +24,7 @@ from paic.mcp_server.tools import pacing as pacing_tools
 from paic.mcp_server.tools import paper_plan as paper_plan_tools
 from paic.mcp_server.tools import related_work as related_work_tools
 from paic.mcp_server.tools import review as review_tools
+from paic.mcp_server.tools import revisions as revisions_tools
 from paic.mcp_server.tools import runs as runs_tools
 from paic.mcp_server.tools import search_recall as search_recall_tools
 from paic.mcp_server.tools import strategy as strategy_tools
@@ -377,6 +378,61 @@ def paic_related_work_cluster(project_dir: str) -> dict[str, Any]:
 def paic_related_work_status(project_dir: str) -> dict[str, Any]:
     """Read the existing related-work clusters; report ``exists=False`` otherwise."""
     return related_work_tools.related_work_status_tool(project_dir)
+
+
+# --- Revision queue tools (§quality phase 8) -------------------------------
+
+@mcp.tool()
+def paic_revision_extract(
+    project_dir: str,
+    review_payload: dict[str, Any],
+    round_num: int | None = None,
+) -> dict[str, Any]:
+    """Convert a review payload into a flat list of RevisionTasks.
+
+    Single LLM call that breaks the moderator's synthesis + per-persona
+    critiques into discrete actionable tasks (severity / target /
+    summary / detail / patch_hint). Persists each task to
+    ``<project>/.paic/revisions/<round>_<id>.yaml``.
+    """
+    return revisions_tools.revision_extract_tool(
+        project_dir, review_payload, round_num=round_num,
+    )
+
+
+@mcp.tool()
+def paic_revision_list(
+    project_dir: str,
+    status: str | None = None,
+    severity: str | None = None,
+    round_num: int | None = None,
+) -> dict[str, Any]:
+    """List RevisionTasks, sorted by severity desc + round desc + creation time.
+
+    Filters: ``status`` (open / in_progress / resolved / wontfix),
+    ``severity`` (info / minor / major / blocker), ``round_num``.
+    """
+    return revisions_tools.revision_list_tool(
+        project_dir, status=status, severity=severity, round_num=round_num,
+    )
+
+
+@mcp.tool()
+def paic_revision_apply(project_dir: str, task_id: str) -> dict[str, Any]:
+    """Mark a RevisionTask ``in_progress``. The actual edit is up to the user."""
+    return revisions_tools.revision_apply_tool(project_dir, task_id)
+
+
+@mcp.tool()
+def paic_revision_resolve(
+    project_dir: str,
+    task_id: str,
+    resolution_summary: str,
+) -> dict[str, Any]:
+    """Mark a RevisionTask ``resolved`` with a one-line summary of the change."""
+    return revisions_tools.revision_resolve_tool(
+        project_dir, task_id, resolution_summary,
+    )
 
 
 @mcp.tool()
