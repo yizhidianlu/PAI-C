@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from paic.library.claims import (
+    _ExtractFields,
+    _extract_inline_cites,
     extract_claims_from_section,
     init_claims_from_paper_plan,
     load_ledger,
@@ -13,7 +15,10 @@ from paic.library.claims import (
     validate_ledger,
 )
 from paic.llm.client import LLMClient, LLMUnavailable, get_default_client
-from paic.schemas.claim import ClaimsLedger
+from paic.llm.host import build_host_directive
+from paic.llm.prompts import load_prompt
+from paic.llm.router import LLMRouter
+from paic.schemas.claim import Claim, ClaimsLedger
 from paic.schemas.paper_plan import PaperPlan
 from paic.workspace.paths import resolve_project
 from paic.workspace.store import load_yaml
@@ -66,6 +71,33 @@ def claims_extract_tool(
     paths = resolve_project(project_dir)
     if not paths.paic_dir.exists():
         return {"error": "project_not_initialized", "project_dir": str(paths.root)}
+    if not section_text.strip():
+        return _claims_extract_response(paths, section_name, [])
+
+    from paic.config import load_config
+    cfg = load_config()
+    router = LLMRouter(cfg)
+    if router.is_host_orchestrated("claim_extract"):
+        return build_host_directive(
+            node="claim_extract",
+            instructions=(
+                "Extract claim-shaped sentences from `user_prompt` matching "
+                "`schema_hint`. Then call mcp__paic__paic_claims_extract_persist "
+                "with `extracted=<your JSON>` plus `section_name` / "
+                "`section_text` / `contribution_id` from `metadata`."
+            ),
+            user_prompt=(
+                f"### SECTION: {section_name}\n\n"
+                f"### TEXT\n```\n{section_text.strip()}\n```\n"
+            ),
+            schema_hint=_ExtractFields.model_json_schema(),
+            next_tool="mcp__paic__paic_claims_extract_persist",
+            metadata={
+                "section_name": section_name,
+                "section_text": section_text,
+                "contribution_id": contribution_id,
+            },
+        ).to_dict()
 
     client = llm or get_default_client()
     try:
@@ -78,6 +110,59 @@ def claims_extract_tool(
     except LLMUnavailable as exc:
         return {"error": "llm_unavailable", "detail": str(exc)}
 
+    return _claims_extract_response(paths, section_name, new_claims)
+
+
+def claims_extract_persist_tool(
+    project_dir: str,
+    extracted: dict[str, Any],
+    section_name: str,
+    section_text: str,
+    contribution_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist host-generated claim extraction (LLM-free).
+
+    Validates ``extracted`` against ``_ExtractFields`` and runs the same
+    inline-cite augmentation + ledger merge as the LLM path.
+    """
+    from datetime import UTC, datetime
+    from ulid import ULID
+    from pydantic import ValidationError
+
+    paths = resolve_project(project_dir)
+    if not paths.paic_dir.exists():
+        return {"error": "project_not_initialized", "project_dir": str(paths.root)}
+
+    try:
+        fields = _ExtractFields.model_validate(extracted)
+    except ValidationError as exc:
+        return {"error": "schema_validation_failed", "detail": exc.errors()}
+
+    inline_cites = _extract_inline_cites(section_text)
+    now = datetime.now(UTC)
+    new_claims: list[Claim] = []
+    for i, raw in enumerate(fields.claims, start=1):
+        claim_id = f"CL_{section_name}_{i}_{ULID()}"
+        required = list(raw.required_citations)
+        for cite in inline_cites:
+            if cite not in required:
+                required.append(cite)
+        new_claims.append(Claim(
+            id=claim_id,
+            text=raw.text,
+            type=raw.type,
+            status=raw.status,
+            contribution_id=contribution_id,
+            required_citations=required,
+            appears_in_sections=[section_name],
+            notes=raw.notes,
+            created_at=now,
+            updated_at=now,
+        ))
+    return _claims_extract_response(paths, section_name, new_claims)
+
+
+def _claims_extract_response(paths, section_name, new_claims):
     existing = load_ledger(paths)
     merged = merge_claims(existing.claims, new_claims)
     ledger = ClaimsLedger(claims=merged)
@@ -87,7 +172,6 @@ def claims_extract_tool(
         c for c in new_claims
         if c.status == "needs_evidence" and c.type in {"novelty", "comparative", "numeric", "result"}
     ]
-
     return {
         "section_name": section_name,
         "extracted_count": len(new_claims),
@@ -99,28 +183,60 @@ def claims_extract_tool(
     }
 
 
-def claims_validate_tool(project_dir: str) -> dict[str, Any]:
+def claims_validate_tool(
+    project_dir: str,
+    semantic: bool = False,
+    *,
+    llm: LLMClient | None = None,
+) -> dict[str, Any]:
     """Cross-check every claim's references against the project library / experiments.
 
-    Returns ``{issues, by_claim, claims_count, ok}``.
+    ``semantic=True`` enables LLM-as-judge: for each ``required_citation`` whose
+    paper summary exists on disk, asks whether the cited paper actually
+    supports the claim. ``unrelated`` verdicts become ``unrelated_citation``
+    blockers; ``partially_supports`` become ``partial_citation`` minor warnings.
+    Results are cached on disk by ``sha(claim || cite || summary)`` so
+    iteration is cheap.
+
+    Returns ``{issues, by_claim, claims_count, issues_count, ok, semantic}``.
+    Each issue has ``{claim_id, kind, severity, detail}``.
     """
     paths = resolve_project(project_dir)
     if not paths.paic_dir.exists():
         return {"error": "project_not_initialized", "project_dir": str(paths.root)}
 
+    client = llm
+    if semantic and client is None:
+        try:
+            client = get_default_client()
+        except LLMUnavailable as exc:
+            return {"error": "llm_unavailable", "detail": str(exc)}
+
     ledger = load_ledger(paths)
-    result = validate_ledger(ledger, paths)
+    try:
+        result = validate_ledger(ledger, paths, semantic=semantic, llm=client)
+    except LLMUnavailable as exc:
+        return {"error": "llm_unavailable", "detail": str(exc)}
 
     return {
         "claims_count": len(ledger.claims),
         "issues_count": len(result.issues),
         "ok": len(result.issues) == 0,
+        "semantic": semantic,
         "issues": [
-            {"claim_id": i.claim_id, "kind": i.kind, "detail": i.detail}
+            {
+                "claim_id": i.claim_id,
+                "kind": i.kind,
+                "severity": i.severity,
+                "detail": i.detail,
+            }
             for i in result.issues
         ],
         "by_claim": {
-            cid: [{"kind": i.kind, "detail": i.detail} for i in issues]
+            cid: [
+                {"kind": i.kind, "severity": i.severity, "detail": i.detail}
+                for i in issues
+            ]
             for cid, issues in result.by_claim.items()
         },
     }

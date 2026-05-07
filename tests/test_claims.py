@@ -316,6 +316,138 @@ def test_validate_supported_claim_no_issues():
     assert issues == []
 
 
+# ----------------------------------------------------- semantic claim judge
+
+
+class _StubJudgeLLM:
+    """Stub that returns a configurable verdict for the claim_judge node."""
+
+    model = "stub-judge"
+
+    def __init__(self, verdict: str = "supports", rationale: str = "stub"):
+        self.verdict = verdict
+        self.rationale = rationale
+        self.calls: list[dict] = []
+
+    def complete_json(self, *, system, user, schema, max_tokens=4096, temperature=0.0, node=None):
+        from paic.library.claims import _JudgeResult
+        self.calls.append({"node": node, "user": user})
+        assert schema is _JudgeResult
+        return _JudgeResult(verdict=self.verdict, rationale=self.rationale)
+
+
+def _seed_summary(project_dir, cite_key: str, body: str = "Summary text content."):
+    paths = resolve_project(str(project_dir))
+    paths.summaries_dir.mkdir(parents=True, exist_ok=True)
+    (paths.summaries_dir / f"{cite_key}.md").write_text(body, encoding="utf-8")
+
+
+def _seed_claim_with_cite(project_dir, cite_key: str, claim_text: str = "Our method beats CSP by 3.2% on BCI-IV."):
+    """Seed a single claim referring to ``cite_key`` and persist the ledger."""
+    paths = resolve_project(str(project_dir))
+    now = datetime.now(UTC)
+    ledger = ClaimsLedger(claims=[
+        Claim(
+            id="CL1",
+            text=claim_text,
+            type="comparative",
+            status="needs_evidence",
+            required_citations=[cite_key],
+            created_at=now,
+            updated_at=now,
+        )
+    ])
+    save_ledger(paths, ledger)
+
+
+def test_semantic_judge_unrelated_flagged_as_blocker(project, monkeypatch):
+    """Unrelated cite verdict → unrelated_citation issue with severity=blocker."""
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))  # isolate cache
+    _seed_claim_with_cite(project, "arxiv_p1")
+    _seed_summary(project, "arxiv_p1", "This paper is about EEG signal denoising, no CSP comparison.")
+
+    llm = _StubJudgeLLM(verdict="unrelated", rationale="Paper studies denoising, not CSP comparison.")
+    res = claims_validate_tool(str(project), semantic=True, llm=llm)
+
+    assert res["semantic"] is True
+    kinds = {(i["kind"], i["severity"]) for i in res["issues"]}
+    assert ("unrelated_citation", "blocker") in kinds
+    assert len(llm.calls) == 1
+
+
+def test_semantic_judge_partial_flagged_as_minor(project, monkeypatch):
+    """Partial supports verdict → partial_citation issue with severity=minor."""
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))
+    _seed_claim_with_cite(project, "arxiv_p1")
+    _seed_summary(project, "arxiv_p1", "Related but doesn't directly compare to CSP.")
+
+    llm = _StubJudgeLLM(verdict="partially_supports", rationale="Paper is related but weaker.")
+    res = claims_validate_tool(str(project), semantic=True, llm=llm)
+
+    kinds = {(i["kind"], i["severity"]) for i in res["issues"]}
+    assert ("partial_citation", "minor") in kinds
+
+
+def test_semantic_judge_supports_no_issue(project, monkeypatch):
+    """Supports verdict → no semantic issue is added."""
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))
+    _seed_claim_with_cite(project, "arxiv_p1")
+    _seed_summary(project, "arxiv_p1", "Paper directly evaluates CSP and reports a 3.2% gain.")
+
+    llm = _StubJudgeLLM(verdict="supports", rationale="Direct evaluation matches the claim.")
+    res = claims_validate_tool(str(project), semantic=True, llm=llm)
+
+    semantic_kinds = {i["kind"] for i in res["issues"] if i["kind"] in ("unrelated_citation", "partial_citation")}
+    assert semantic_kinds == set()
+
+
+def test_semantic_skipped_when_summary_missing(project, monkeypatch):
+    """If the cite_key has no summary on disk, the judge is silently skipped."""
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))
+    _seed_claim_with_cite(project, "arxiv_p1")  # no summary
+
+    llm = _StubJudgeLLM(verdict="unrelated")
+    res = claims_validate_tool(str(project), semantic=True, llm=llm)
+
+    # No semantic issue because no summary → can't judge.
+    semantic_kinds = {i["kind"] for i in res["issues"] if i["kind"] in ("unrelated_citation", "partial_citation")}
+    assert semantic_kinds == set()
+    assert llm.calls == []
+
+
+def test_semantic_off_skips_judge_entirely(project, monkeypatch):
+    """semantic=False → judge is never called even if a summary exists."""
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))
+    _seed_claim_with_cite(project, "arxiv_p1")
+    _seed_summary(project, "arxiv_p1", "Some summary.")
+
+    llm = _StubJudgeLLM(verdict="unrelated")
+    res = claims_validate_tool(str(project), semantic=False, llm=llm)
+
+    semantic_kinds = {i["kind"] for i in res["issues"] if i["kind"] in ("unrelated_citation", "partial_citation")}
+    assert semantic_kinds == set()
+    assert llm.calls == []
+
+
+def test_semantic_judge_cache_avoids_second_call(project, monkeypatch):
+    """Same (claim, cite, summary) on a re-run hits cache → judge not called twice."""
+    monkeypatch.setenv("PAIC_HOME", str(project / ".paic_user"))
+    _seed_claim_with_cite(project, "arxiv_p1")
+    _seed_summary(project, "arxiv_p1", "Stable summary text.")
+
+    llm1 = _StubJudgeLLM(verdict="unrelated", rationale="First call.")
+    res1 = claims_validate_tool(str(project), semantic=True, llm=llm1)
+    assert any(i["kind"] == "unrelated_citation" for i in res1["issues"])
+    assert len(llm1.calls) == 1
+
+    # Second run with a fresh stub — would error if semantically called again.
+    llm2 = _StubJudgeLLM(verdict="supports", rationale="Should not be reached.")
+    res2 = claims_validate_tool(str(project), semantic=True, llm=llm2)
+    # Cache hit → still flagged unrelated, llm2 not invoked.
+    assert any(i["kind"] == "unrelated_citation" for i in res2["issues"])
+    assert llm2.calls == []
+
+
 # ----------------------------------------------------- tools
 
 

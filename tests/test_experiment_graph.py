@@ -317,3 +317,162 @@ def test_phase5_experiment_plan_default_lists_empty():
     assert plan.statistical_plan == []
     assert plan.reproducibility == []
     assert plan.validation_warnings == []
+    assert plan.results == []  # phase-10 numeric provenance default
+
+
+# ----------------------------------------------------- ExperimentResult schema
+
+
+def test_experiment_result_round_trip():
+    """ExperimentResult round-trips through model_dump → model_validate."""
+    from paic.schemas.experiment import ExperimentResult
+
+    r = ExperimentResult(
+        metric_name="accuracy",
+        value=92.3,
+        unit="%",
+        run_id="abc123",
+        seed=42,
+        timestamp=datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC),
+        ci_lower=91.8,
+        ci_upper=92.7,
+        notes="held-out test split",
+    )
+    dumped = r.model_dump(mode="json")
+    reloaded = ExperimentResult.model_validate(dumped)
+    assert reloaded.metric_name == "accuracy"
+    assert reloaded.value == 92.3
+    assert reloaded.seed == 42
+    assert reloaded.ci_lower == 91.8
+
+
+# ----------------------------------------------------- experiment_record_result_tool
+
+
+def _seed_experiment_yaml(project_dir, exp_id: str = "exp_x"):
+    """Minimal experiment yaml (no results) for record_result tests."""
+    from paic.workspace.paths import resolve_project
+    from paic.workspace.store import save_yaml
+
+    paths = resolve_project(str(project_dir))
+    paths.experiments_dir.mkdir(parents=True, exist_ok=True)
+    save_yaml(paths.experiments_dir / f"{exp_id}.yaml", {
+        "id": exp_id,
+        "idea_id": "idea_x",
+        "research_questions": ["q?"],
+        "hypotheses": ["h"],
+        "datasets": [],
+        "baselines": [],
+        "proposed_method": "m",
+        "metrics": [],
+        "ablations": [],
+        "success_criteria": [],
+        "threats_to_validity": [],
+        "created_at": datetime.now(UTC).isoformat(),
+        "status": "draft",
+    })
+
+
+def test_record_result_appends_to_empty_experiment(tmp_path, monkeypatch):
+    """First record_result call appends a single entry to results[]."""
+    from paic.config import reset_config_cache
+    from paic.mcp_server.tools.experiment import experiment_record_result_tool
+    from paic.mcp_server.tools.workspace import workspace_init
+    from paic.workspace.paths import resolve_project
+    from paic.workspace.store import load_yaml
+
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path / ".paic"))
+    reset_config_cache()
+    p = tmp_path / "p"
+    workspace_init(p)
+    _seed_experiment_yaml(p)
+
+    res = experiment_record_result_tool(
+        str(p), "exp_x",
+        metric_name="accuracy", value=92.3, run_id="r1",
+        unit="%", seed=42,
+    )
+    assert res.get("error") is None
+    assert res["added"] is True
+    assert res["replaced"] is False
+    assert res["result_count"] == 1
+
+    paths = resolve_project(str(p))
+    raw = load_yaml(paths.experiments_dir / "exp_x.yaml")
+    results = raw["results"]
+    assert len(results) == 1
+    assert results[0]["metric_name"] == "accuracy"
+    assert results[0]["value"] == 92.3
+    assert results[0]["seed"] == 42
+    assert "timestamp" in results[0]
+
+
+def test_record_result_idempotent_replaces_same_triple(tmp_path, monkeypatch):
+    """Second call with same (metric, run_id, seed) replaces (does not duplicate)."""
+    from paic.config import reset_config_cache
+    from paic.mcp_server.tools.experiment import experiment_record_result_tool
+    from paic.mcp_server.tools.workspace import workspace_init
+    from paic.workspace.paths import resolve_project
+    from paic.workspace.store import load_yaml
+
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path / ".paic"))
+    reset_config_cache()
+    p = tmp_path / "p"
+    workspace_init(p)
+    _seed_experiment_yaml(p)
+
+    experiment_record_result_tool(
+        str(p), "exp_x", metric_name="accuracy", value=90.0, run_id="r1", seed=42,
+    )
+    res2 = experiment_record_result_tool(
+        str(p), "exp_x", metric_name="accuracy", value=92.3, run_id="r1", seed=42,
+        notes="re-analysis after fix",
+    )
+    assert res2["replaced"] is True
+    assert res2["added"] is False
+    assert res2["result_count"] == 1
+
+    paths = resolve_project(str(p))
+    raw = load_yaml(paths.experiments_dir / "exp_x.yaml")
+    assert raw["results"][0]["value"] == 92.3
+    assert raw["results"][0]["notes"] == "re-analysis after fix"
+
+
+def test_record_result_distinct_seeds_kept_separate(tmp_path, monkeypatch):
+    """Different seeds for the same metric/run_id are kept as separate entries."""
+    from paic.config import reset_config_cache
+    from paic.mcp_server.tools.experiment import experiment_record_result_tool
+    from paic.mcp_server.tools.workspace import workspace_init
+    from paic.workspace.paths import resolve_project
+    from paic.workspace.store import load_yaml
+
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path / ".paic"))
+    reset_config_cache()
+    p = tmp_path / "p"
+    workspace_init(p)
+    _seed_experiment_yaml(p)
+
+    experiment_record_result_tool(str(p), "exp_x", "accuracy", 91.0, "r1", seed=0)
+    experiment_record_result_tool(str(p), "exp_x", "accuracy", 92.5, "r1", seed=1)
+    experiment_record_result_tool(str(p), "exp_x", "accuracy", 91.7, "r1", seed=2)
+
+    paths = resolve_project(str(p))
+    raw = load_yaml(paths.experiments_dir / "exp_x.yaml")
+    assert len(raw["results"]) == 3
+
+
+def test_record_result_errors_on_missing_experiment(tmp_path, monkeypatch):
+    """Recording against a non-existent experiment_id returns experiment_not_found."""
+    from paic.config import reset_config_cache
+    from paic.mcp_server.tools.experiment import experiment_record_result_tool
+    from paic.mcp_server.tools.workspace import workspace_init
+
+    monkeypatch.setenv("PAIC_HOME", str(tmp_path / ".paic"))
+    reset_config_cache()
+    p = tmp_path / "p"
+    workspace_init(p)
+    res = experiment_record_result_tool(
+        str(p), "exp_does_not_exist",
+        metric_name="accuracy", value=90.0, run_id="r1",
+    )
+    assert res["error"] == "experiment_not_found"

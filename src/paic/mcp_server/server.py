@@ -343,10 +343,14 @@ def paic_claims_extract(
 
 
 @mcp.tool()
-def paic_claims_validate(project_dir: str) -> dict[str, Any]:
+def paic_claims_validate(
+    project_dir: str,
+    semantic: bool = False,
+) -> dict[str, Any]:
     """Cross-check the entire claim ledger against the project library and experiments.
 
-    Surfaces three kinds of issues:
+    Surfaces five kinds of issues:
+
     - ``missing_cite`` — claim's ``required_citations`` references a
       cite_key not in the project library.
     - ``unknown_experiment`` — claim's ``supporting_experiments``
@@ -354,10 +358,20 @@ def paic_claims_validate(project_dir: str) -> dict[str, Any]:
     - ``unsupported_strong_claim`` — claim of type novelty / comparative /
       numeric / result with status=``needs_evidence`` and no
       supporting_papers / supporting_experiments / required_citations.
+    - ``unrelated_citation`` (semantic only, severity=blocker) — LLM judge
+      determined the cited paper does not actually support the claim.
+    - ``partial_citation`` (semantic only, severity=minor) — judge says
+      paper is related but the claim makes a stronger assertion.
 
-    Returns ``{ok, claims_count, issues_count, issues, by_claim}``.
+    ``semantic=True`` enables the LLM-as-judge pass against each cite_key
+    that has an existing structured summary on disk. Verdicts are cached
+    so iteration is cheap. Pass ``semantic=False`` (default) for the
+    structural-only fast path.
+
+    Returns ``{ok, claims_count, issues_count, semantic, issues, by_claim}``.
+    Each issue has ``{claim_id, kind, severity, detail}``.
     """
-    return claims_tools.claims_validate_tool(project_dir)
+    return claims_tools.claims_validate_tool(project_dir, semantic=semantic)
 
 
 @mcp.tool()
@@ -769,6 +783,48 @@ def paic_experiment_start(
     datasets, venue_target) the LLM should respect when designing the plan.
     """
     return experiment_tools.experiment_start(project_dir, idea_id, constraints=constraints)
+
+
+@mcp.tool()
+def paic_experiment_record_result(
+    project_dir: str,
+    experiment_id: str,
+    metric_name: str,
+    value: float,
+    run_id: str,
+    unit: str = "",
+    seed: int | None = None,
+    timestamp: str | None = None,
+    ci_lower: float | None = None,
+    ci_upper: float | None = None,
+    notes: str = "",
+) -> dict[str, Any]:
+    """Append (or update) one numeric result to an existing experiment plan.
+
+    Use after a real run finishes to capture the actual outcome — the
+    ``check_numeric_provenance`` quality gate will then verify every numeric
+    claim in the paper traces back to one of these recorded values within
+    tolerance. Without this, ``ExperimentPlan`` only describes intent, and
+    abstract / results numbers cannot be validated.
+
+    Idempotent on ``(metric_name, run_id, seed)``: re-calling with the same
+    triple replaces the entry (e.g. for CI updates after re-analysis). Pass
+    ``run_id`` as any stable identifier mapping back to your run logs —
+    git sha, slurm job id, wandb run name, ulid, etc.
+    """
+    return experiment_tools.experiment_record_result_tool(
+        project_dir,
+        experiment_id,
+        metric_name,
+        value,
+        run_id,
+        unit=unit,
+        seed=seed,
+        timestamp=timestamp,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        notes=notes,
+    )
 
 
 @mcp.tool()

@@ -95,6 +95,72 @@ _LABEL_RE = re.compile(r"\\label\{([^}]+)\}")
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?\s*%?")
 
+# Tighter regex for `check_numeric_provenance` — captures sign, integer /
+# decimal, and an optional percent / pp / x suffix so we can normalize
+# across "92.3%", "0.923", "+5", "3.2 percent", "1.5x" before tolerance
+# matching. The leading lookbehind avoids matching "section 4" / "step 2".
+_PROVENANCE_NUM_RE = re.compile(
+    r"(?<![A-Za-z_])([+-]?\d+(?:\.\d+)?)\s*(%|percent|percentage points|pp|x|×)?",
+    re.IGNORECASE,
+)
+_NUMERIC_TOLERANCE_REL = 0.005  # 0.5% relative tolerance
+
+
+def _extract_numbers_from_claim(text: str) -> list[tuple[float, str]]:
+    """Return ``(value, normalized_unit)`` pairs from a claim's free text.
+
+    ``normalized_unit`` is ``"%"`` for any percent variant or empty
+    otherwise. Skips obvious section / step references via the
+    lookbehind in ``_PROVENANCE_NUM_RE``.
+    """
+    out: list[tuple[float, str]] = []
+    for m in _PROVENANCE_NUM_RE.finditer(text or ""):
+        try:
+            val = float(m.group(1))
+        except (TypeError, ValueError):
+            continue
+        suffix = (m.group(2) or "").lower()
+        if suffix in {"%", "percent", "percentage points", "pp"}:
+            unit = "%"
+        elif suffix in {"x", "×"}:
+            unit = "x"
+        else:
+            unit = ""
+        out.append((val, unit))
+    return out
+
+
+def _result_value_matches(claim_num: tuple[float, str], result: dict) -> bool:
+    """Return True if ``result.value`` matches the claim's number within
+    tolerance, accounting for percent/decimal scaling.
+    """
+    raw_val = result.get("value")
+    if raw_val is None:
+        return False
+    try:
+        rv = float(raw_val)
+    except (TypeError, ValueError):
+        return False
+
+    target, _unit = claim_num
+    candidates = [rv, rv * 100.0, rv / 100.0]
+    for cand in candidates:
+        denom = max(abs(cand), 1e-9)
+        if abs(cand - target) / denom <= _NUMERIC_TOLERANCE_REL:
+            return True
+    return False
+
+
+def _experiment_results(paths: ProjectPaths, exp_id: str) -> list[dict]:
+    """Load ``results[]`` from one experiment yaml; tolerant of malformed entries."""
+    exp_path = paths.experiments_dir / f"{exp_id}.yaml"
+    if not exp_path.is_file():
+        return []
+    raw = load_yaml(exp_path) or {}
+    if not isinstance(raw, dict):
+        return []
+    return [r for r in (raw.get("results") or []) if isinstance(r, dict)]
+
 
 def _read_section(path: Path) -> str:
     if not path.is_file():
@@ -365,6 +431,22 @@ def check_numeric_provenance(
     paths: ProjectPaths,
     experiment_ids: set[str],
 ) -> list[GateIssue]:
+    """Verify every numeric claim's value actually matches a recorded
+    ``ExperimentResult``. Three failure modes:
+
+    - ``numeric_provenance`` (major) — no supporting_experiments, no
+      required_citations; the claim is unmoored.
+    - ``numeric_no_results_recorded`` (major) — supporting experiment(s)
+      exist but have empty ``results[]``; user hasn't logged real outcomes
+      via ``paic_experiment_record_result`` yet.
+    - ``numeric_unmatched`` (**blocker**) — supporting experiment(s) have
+      results, but no result's ``value`` matches a number in the claim
+      text within ``_NUMERIC_TOLERANCE_REL`` (0.5% relative). This is the
+      "abstract says 4.2% but results.yaml says 4.0%" case.
+
+    External numeric claims (e.g. citing prior work's number) are exempt
+    via ``required_citations``.
+    """
     if not paths.claims_yaml.is_file():
         return []
     raw = load_yaml(paths.claims_yaml) or {}
@@ -376,28 +458,83 @@ def check_numeric_provenance(
             continue
         if c.get("type") != "numeric":
             continue
-        if not _NUMBER_RE.search(c.get("text") or ""):
+        text = c.get("text") or ""
+        numbers = _extract_numbers_from_claim(text)
+        if not numbers:
             continue  # numeric type but no digits — likely mis-classified
+
         supporting_exps = c.get("supporting_experiments") or []
-        valid_exp = any(eid in experiment_ids for eid in supporting_exps)
-        if valid_exp:
+        valid_exps = [eid for eid in supporting_exps if eid in experiment_ids]
+
+        if not valid_exps:
+            if c.get("required_citations"):
+                # External numeric claim — citation is acceptable provenance.
+                continue
+            issues.append(GateIssue(
+                kind="numeric_provenance",
+                severity="major",
+                target=c.get("id"),
+                detail=(
+                    f"Numeric claim {c.get('id')} has no supporting_experiments "
+                    f"and no required_citations: '{text[:160]}'."
+                ),
+                actionable_fix=(
+                    "Either (a) attach an experiment_id whose results produce "
+                    "this number, or (b) cite the source paper for an external "
+                    "number."
+                ),
+            ))
             continue
-        if c.get("required_citations"):
-            # External numeric claim — citation is acceptable provenance.
+
+        # Has at least one valid supporting experiment. Look up its results.
+        all_results: list[dict] = []
+        for eid in valid_exps:
+            all_results.extend(_experiment_results(paths, eid))
+
+        if not all_results:
+            issues.append(GateIssue(
+                kind="numeric_no_results_recorded",
+                severity="major",
+                target=c.get("id"),
+                detail=(
+                    f"Numeric claim {c.get('id')} references experiment(s) "
+                    f"{valid_exps} but they have no ``results[]`` recorded yet."
+                ),
+                actionable_fix=(
+                    "Run paic_experiment_record_result(experiment_id, "
+                    "metric_name, value, run_id, ...) to log each real "
+                    "outcome from your runs, then re-run /paic-finalize."
+                ),
+            ))
             continue
-        issues.append(GateIssue(
-            kind="numeric_provenance",
-            severity="major",
-            target=c.get("id"),
-            detail=(
-                f"Numeric claim {c.get('id')} has no supporting_experiments and "
-                f"no required_citations: '{(c.get('text') or '')[:160]}'."
-            ),
-            actionable_fix=(
-                "Either (a) attach an experiment_id whose metrics produce this "
-                "number, or (b) cite the source paper for an external number."
-            ),
-        ))
+
+        # Try to match each number in the claim against any recorded result.
+        unmatched: list[float] = []
+        for num in numbers:
+            if not any(_result_value_matches(num, r) for r in all_results):
+                unmatched.append(num[0])
+
+        if unmatched:
+            issues.append(GateIssue(
+                kind="numeric_unmatched",
+                severity="blocker",
+                target=c.get("id"),
+                detail=(
+                    f"Numeric claim {c.get('id')}: number(s) {unmatched} "
+                    f"do not match any recorded ExperimentResult in "
+                    f"{valid_exps} (within "
+                    f"{_NUMERIC_TOLERANCE_REL * 100:.1f}% relative tolerance). "
+                    f"Claim text: '{text[:160]}'."
+                ),
+                actionable_fix=(
+                    "Either (a) the claim is wrong — fix the number; (b) the "
+                    "result wasn't recorded — call "
+                    "paic_experiment_record_result with the actual value; "
+                    "(c) the number is from an external source — set "
+                    "required_citations on the claim and remove this "
+                    "experiment binding."
+                ),
+            ))
     return issues
 
 

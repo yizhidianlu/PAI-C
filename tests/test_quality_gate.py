@@ -59,6 +59,34 @@ def _write_claims(project_dir, claims):
     })
 
 
+def _write_experiment(project_dir, exp_id: str, *, results: list[dict] | None = None):
+    """Write a minimal experiment yaml with optional ``results[]`` entries.
+
+    Used by numeric_provenance tests so the gate can actually load results,
+    not just rely on existence checks.
+    """
+    paths = resolve_project(str(project_dir))
+    paths.experiments_dir.mkdir(parents=True, exist_ok=True)
+    raw = {
+        "id": exp_id,
+        "idea_id": "idea_x",
+        "research_questions": ["q?"],
+        "hypotheses": ["h"],
+        "datasets": [{"name": "ds1", "rationale": "x"}],
+        "baselines": [{"name": "b1", "why": "y"}],
+        "proposed_method": "m",
+        "metrics": [{"name": "accuracy", "direction": "max", "primary": True}],
+        "ablations": [],
+        "compute_budget": "1xA100",
+        "success_criteria": ["+3%"],
+        "threats_to_validity": [],
+        "created_at": datetime.now(UTC).isoformat(),
+        "status": "draft",
+        "results": results or [],
+    }
+    save_yaml(paths.experiments_dir / f"{exp_id}.yaml", raw)
+
+
 # ----------------------------------------------------- check_undefined_cites_refs
 
 
@@ -247,7 +275,11 @@ def test_numeric_claim_without_provenance_flagged(project):
     assert any(i.kind == "numeric_provenance" for i in issues)
 
 
-def test_numeric_claim_with_experiment_no_issue(project):
+def test_numeric_claim_with_experiment_results_match_no_issue(project):
+    """Numeric claim whose value matches a recorded ExperimentResult passes."""
+    _write_experiment(project, "exp_1", results=[
+        {"metric_name": "accuracy", "value": 78.4, "unit": "%", "run_id": "r1"},
+    ])
     _write_claims(project, [{
         "id": "CL1", "type": "numeric", "status": "supported",
         "text": "78.4% accuracy.",
@@ -258,6 +290,90 @@ def test_numeric_claim_with_experiment_no_issue(project):
     paths = resolve_project(str(project))
     issues = check_numeric_provenance(paths, experiment_ids={"exp_1"})
     assert issues == []
+
+
+def test_numeric_claim_with_experiment_but_no_results_flagged_major(project):
+    """Experiment exists but ``results[]`` empty → ``numeric_no_results_recorded``
+    (major, not blocker — backwards-compatible with v0.1 projects)."""
+    _write_experiment(project, "exp_1", results=[])
+    _write_claims(project, [{
+        "id": "CL1", "type": "numeric", "status": "supported",
+        "text": "78.4% accuracy.",
+        "supporting_experiments": ["exp_1"],
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }])
+    paths = resolve_project(str(project))
+    issues = check_numeric_provenance(paths, experiment_ids={"exp_1"})
+    assert any(
+        i.kind == "numeric_no_results_recorded" and i.severity == "major"
+        for i in issues
+    )
+
+
+def test_numeric_claim_unmatched_result_is_blocker(project):
+    """Claim says 4.2% but recorded result is 4.0% → ``numeric_unmatched`` blocker."""
+    _write_experiment(project, "exp_1", results=[
+        {"metric_name": "accuracy", "value": 4.0, "unit": "%", "run_id": "r1"},
+    ])
+    _write_claims(project, [{
+        "id": "CL1", "type": "numeric", "status": "supported",
+        "text": "We achieve 4.2% gain.",
+        "supporting_experiments": ["exp_1"],
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }])
+    paths = resolve_project(str(project))
+    issues = check_numeric_provenance(paths, experiment_ids={"exp_1"})
+    assert any(
+        i.kind == "numeric_unmatched" and i.severity == "blocker"
+        for i in issues
+    )
+
+
+def test_numeric_claim_decimal_result_matches_percent_claim(project):
+    """results.value=0.923 should match a claim that says 92.3% (auto scaling)."""
+    _write_experiment(project, "exp_1", results=[
+        {"metric_name": "accuracy", "value": 0.923, "unit": "", "run_id": "r1"},
+    ])
+    _write_claims(project, [{
+        "id": "CL1", "type": "numeric", "status": "supported",
+        "text": "92.3% accuracy on the held-out split.",
+        "supporting_experiments": ["exp_1"],
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }])
+    paths = resolve_project(str(project))
+    issues = check_numeric_provenance(paths, experiment_ids={"exp_1"})
+    assert issues == []
+
+
+def test_numeric_claim_blocker_cannot_be_overridden_via_gate(project):
+    """End-to-end: claim says 4.2% but result is 4.0%; user adds the kind to
+    overrides; the run_quality_gate output keeps the blocker and reports
+    overrides_rejected (item 1 + item 5 working together).
+    """
+    _write_experiment(project, "exp_1", results=[
+        {"metric_name": "accuracy", "value": 4.0, "unit": "%", "run_id": "r1"},
+    ])
+    _write_claims(project, [{
+        "id": "CL1", "type": "numeric", "status": "supported",
+        "text": "We achieve 4.2% gain.",
+        "supporting_experiments": ["exp_1"],
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }])
+    paths = resolve_project(str(project))
+    res = run_quality_gate(paths, overrides=["numeric_unmatched"])
+    assert res.passed is False
+    assert any(
+        i.kind == "numeric_unmatched" and i.severity == "blocker"
+        for i in res.issues
+    )
+    assert any(
+        r["kind"] == "numeric_unmatched" and r["severity"] == "blocker"
+        for r in res.overrides_rejected
+    )
 
 
 def test_numeric_claim_with_external_cite_no_issue(project):

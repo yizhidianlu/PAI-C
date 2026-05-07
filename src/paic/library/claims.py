@@ -18,10 +18,14 @@ Three distinct uses:
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from ulid import ULID
@@ -162,15 +166,111 @@ def extract_claims_from_section(
     return claims
 
 
+# --- Semantic claim ↔ citation judging ------------------------------------
+
+_JudgeVerdict = Literal["supports", "partially_supports", "unrelated"]
+
+
+class _JudgeResult(BaseModel):
+    """One LLM judgment of whether a cited paper supports a claim."""
+
+    verdict: _JudgeVerdict
+    rationale: str
+
+
+def _summary_text_for(paths: ProjectPaths, cite_key: str) -> str | None:
+    """Read ``library/summaries/<cite_key>.md`` (the structured summary). Returns
+    None if the summary doesn't exist on disk yet."""
+    if not paths.summaries_dir.exists():
+        return None
+    md_path = paths.summaries_dir / f"{cite_key}.md"
+    if not md_path.is_file():
+        return None
+    try:
+        return md_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _judge_cache_dir() -> Path:
+    """Per-user cache for judge results — keyed by ``sha(claim || cite || summary)``.
+
+    Result reuse across re-runs avoids hitting the LLM for every
+    ``/paic-finalize`` when the user iterates on overrides.
+    """
+    base = Path(os.environ.get("PAIC_HOME", str(Path.home() / ".paic")))
+    cache = base / "cache" / "claim_judge"
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
+def _judge_cache_key(claim_text: str, cite_key: str, summary: str) -> str:
+    payload = f"{claim_text.strip()}|{cite_key}|{summary.strip()}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def judge_claim_against_summary(
+    claim_text: str,
+    paper_summary: str,
+    cite_key: str,
+    *,
+    llm: LLMClient,
+    use_cache: bool = True,
+) -> _JudgeResult:
+    """Ask an LLM whether ``paper_summary`` (the cited paper's structured
+    summary) actually supports ``claim_text``. Cached on disk by
+    ``sha(claim || cite || summary)`` so repeated runs are free.
+    """
+    cache_dir = _judge_cache_dir()
+    cache_key = _judge_cache_key(claim_text, cite_key, paper_summary)
+    cache_path = cache_dir / f"{cache_key}.json"
+
+    if use_cache and cache_path.is_file():
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            return _JudgeResult.model_validate(payload)
+        except Exception:
+            pass  # corrupt cache → fall through to a fresh call
+
+    user_msg = (
+        f"### CLAIM\n{claim_text.strip()}\n\n"
+        f"### CITED PAPER (cite_key: {cite_key})\n"
+        f"### PAPER SUMMARY\n{paper_summary.strip() or '(no summary)'}\n"
+    )
+    result = llm.complete_json(
+        system=load_prompt("claim_judge"),
+        user=user_msg,
+        schema=_JudgeResult,
+        max_tokens=512,
+        temperature=0.0,
+        node="claim_judge",
+    )
+
+    if use_cache:
+        try:
+            cache_path.write_text(
+                json.dumps(result.model_dump(mode="json"), ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass  # cache best-effort
+
+    return result
+
+
 # --- Validate against library + experiments --------------------------------
 
 @dataclass
 class ValidationIssue:
     claim_id: str
     kind: str
-    """``missing_cite`` / ``unknown_experiment`` / ``unsupported_strong_claim``."""
+    """``missing_cite`` / ``unknown_experiment`` / ``unsupported_strong_claim`` /
+    ``unrelated_citation`` / ``partial_citation``."""
 
     detail: str
+    severity: str = "major"
+    """``minor`` / ``major`` / ``blocker``. Defaults to ``major`` for
+    backward compatibility; semantic-check kinds set this explicitly."""
 
 
 @dataclass
@@ -233,8 +333,29 @@ def validate_claim(
     return issues
 
 
-def validate_ledger(ledger: ClaimsLedger, paths: ProjectPaths) -> ValidationResult:
-    """Validate every claim in the ledger against the project state."""
+def validate_ledger(
+    ledger: ClaimsLedger,
+    paths: ProjectPaths,
+    *,
+    semantic: bool = False,
+    llm: LLMClient | None = None,
+) -> ValidationResult:
+    """Validate every claim in the ledger against the project state.
+
+    ``semantic=True`` adds an LLM-as-judge pass: for each claim, every cite_key
+    in ``required_citations`` whose summary exists on disk is fed to the
+    ``claim_judge`` prompt; the verdict drives a new issue:
+
+    - ``unrelated`` → ``unrelated_citation`` (severity=blocker — paper truly
+      doesn't support the claim, citation is misplaced)
+    - ``partially_supports`` → ``partial_citation`` (severity=minor — paper
+      is related but the claim is stronger than what it shows)
+    - ``supports`` → no issue
+
+    Verdicts are cached on disk so repeated calls (typical iteration loop)
+    are free. Pass ``semantic=False`` (the default) for the structural-only
+    fast path used by the original v0.1 callers.
+    """
     selected = load_yaml(paths.selected_yaml) or {}
     papers = list(selected.get("papers") or []) if isinstance(selected, dict) else []
     library_cite_keys: set[str] = set()
@@ -255,6 +376,43 @@ def validate_ledger(ledger: ClaimsLedger, paths: ProjectPaths) -> ValidationResu
             library_cite_keys=library_cite_keys,
             experiment_ids=experiment_ids,
         )
+
+        if semantic and llm is not None:
+            # For every cite_key the claim relies on AND that we have a
+            # summary for, ask the judge whether the cited paper supports
+            # this claim. Cite_keys without a summary are silently skipped
+            # (we can't judge what we can't read).
+            for cite_key in claim.required_citations:
+                if cite_key not in library_cite_keys:
+                    continue  # already flagged as missing_cite above
+                summary = _summary_text_for(paths, cite_key)
+                if summary is None or not summary.strip():
+                    continue
+                verdict = judge_claim_against_summary(
+                    claim.text, summary, cite_key, llm=llm
+                )
+                if verdict.verdict == "unrelated":
+                    issues.append(ValidationIssue(
+                        claim_id=claim.id,
+                        kind="unrelated_citation",
+                        severity="blocker",
+                        detail=(
+                            f"Cite '{cite_key}' does not support the claim. "
+                            f"Judge rationale: {verdict.rationale}"
+                        ),
+                    ))
+                elif verdict.verdict == "partially_supports":
+                    issues.append(ValidationIssue(
+                        claim_id=claim.id,
+                        kind="partial_citation",
+                        severity="minor",
+                        detail=(
+                            f"Cite '{cite_key}' partially supports the claim. "
+                            f"Consider weakening the claim or adding a stronger "
+                            f"citation. Judge rationale: {verdict.rationale}"
+                        ),
+                    ))
+
         if issues:
             by_claim[claim.id] = issues
             all_issues.extend(issues)

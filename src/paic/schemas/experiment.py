@@ -64,6 +64,35 @@ class AblationAxis(BaseModel):
     purpose: str
 
 
+class ExperimentResult(BaseModel):
+    """One recorded numeric outcome from a run of the experiment.
+
+    Used by ``check_numeric_provenance`` (quality_gate phase 10) — every
+    numeric claim in the paper must match a value here within tolerance,
+    otherwise the gate raises a blocker. The list is append-only via
+    ``paic_experiment_record_result``; idempotency is enforced by the
+    ``(metric_name, run_id, seed)`` triple.
+    """
+
+    metric_name: str
+    """Free-form metric name. Should be consistent with ``ExperimentPlan.metrics[*].name``."""
+
+    value: float
+    unit: str = ""
+    """e.g. ``"%"``, ``"ms"``, ``"bits/dim"``. Empty for unitless."""
+
+    run_id: str
+    """Stable identifier for the producing run — git sha, slurm job id,
+    wandb run name, or any string the user can map back to logs."""
+
+    seed: int | None = None
+    timestamp: datetime | None = None
+
+    ci_lower: float | None = None
+    ci_upper: float | None = None
+    notes: str = ""
+
+
 class ExperimentPlan(BaseModel):
     id: str
     idea_id: str
@@ -92,6 +121,11 @@ class ExperimentPlan(BaseModel):
     without paper_ref, dataset without license, no primary metric, etc).
     Empty list = clean plan; non-empty = caller / SKILL should surface
     these to the user."""
+
+    results: list[ExperimentResult] = Field(default_factory=list)
+    """Recorded numeric outcomes from runs of this experiment. Empty for
+    plans not yet executed; populated via ``paic_experiment_record_result``
+    so quality_gate can verify numeric claims actually trace to a real run."""
 
     created_at: datetime
     parent_run_id: str | None = None
