@@ -4,7 +4,7 @@
 
 PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 / PDF 附件 / collection 组织）同步到本地或云端 Zotero。机制是 SKILL 层调用独立的 zotero-mcp-server（**不在** PAI-C repo 内），不需要任何额外的 PAI-C 配置——只要 zotero-mcp 注册到 Claude Code，PAI-C 的 `/paic-ingest` 就会自动检测到并询问用户是否同步。
 
-> **PAI-C 不替换 zotero-mcp**——zotero-mcp 是独立的、可被 ChatGPT / Cherry Studio / Cursor 等其他客户端共用的 MCP server；PAI-C 只是消费它的几个 tool（`zotero_get_collections` / `zotero_create_collection` / `zotero_add_by_doi` / `zotero_add_by_url`）。
+> **PAI-C 不替换 zotero-mcp**——zotero-mcp 是独立的、可被 ChatGPT / Cherry Studio / Cursor 等其他客户端共用的 MCP server；PAI-C 只是消费它的几个 tool（`zotero_get_collections` / `zotero_create_collection` / `zotero_add_by_doi` / `zotero_add_by_url` / `zotero_add_from_file`）。
 
 ## 适用场景
 
@@ -18,6 +18,7 @@ PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 
 
 - **Zotero 桌面 app**（macOS / Windows / Linux 都行，**最低 Zotero 7**——本地 API 需要 Zotero 7+）
 - **Python 3.10+**（zotero-mcp-server 要求）
+- **zotero-mcp-server ≥ 0.1.5**（PAI-C 的本地 PDF 兜底路径需要 `zotero_add_from_file`，0.1.5 引入；当前推荐 0.3.0+）
 - **Claude Code**（你已经在用了）
 
 ## Step 1：装 Zotero 桌面 app + 启用本地 API
@@ -139,10 +140,10 @@ ingest 跑完最后，**SKILL 应该会问一句**：
 默认 collection: paic-ingest-<YYYYMMDD>
 ```
 
-回 `y` → SKILL 调 `zotero_create_collection` + 逐篇 `zotero_add_by_doi`/`add_by_url`/`add_from_file`，最后渲染同步报告：
+回 `y` → SKILL 调 `zotero_create_collection` + 逐篇 `zotero_add_by_doi` / `zotero_add_by_url` / `zotero_add_from_file`，最后渲染同步报告：
 
 ```text
-同步成功 3/3 篇（collection: paic-ingest-20260506）
+同步成功 3/3 篇（collection: paic-ingest-20260506；by_doi: 2, by_arxiv_url: 1）
 ```
 
 回 Zotero 桌面 app 看 collection 列表，应该多了一个 `paic-ingest-20260506`，里面就是这 3 篇论文。
@@ -157,9 +158,12 @@ ingest 跑完最后，**SKILL 应该会问一句**：
 |---|---|---|---|
 | 1 | `paper.doi` 非空 | `zotero_add_by_doi` | Zotero 自动从 CrossRef 抓元数据 + 串联 Unpaywall / arXiv / PMC OA 抓 PDF |
 | 2 | `paper.arxiv_id` 非空 | `zotero_add_by_url(https://arxiv.org/abs/<id>)` | Zotero 自动抓 arXiv 元数据 + PDF |
-| 3 | 两种都不可行 | 跳过 | 计入 `zotero_skipped`（reason: `no_doi_no_arxiv`） |
+| 3 | 都没有但 `pdf_local_path` 指向已下载的 PDF | `zotero_add_from_file(file_path=<library/pdfs/…绝对路径>, title=…)` | zotero-mcp 先从 PDF 头页 / metadata 抽 DOI——抽到走 `add_by_doi` 拿富元数据 + 附 PDF；抽不到建 `document` item（标题用 `paper.title`）+ 附 PDF |
+| 4 | 三条都不可行 | 跳过 | 计入 `zotero_skipped`（reason: `no_doi_no_arxiv_no_pdf`） |
 
-> **没有「本地 PDF 兜底上传」路径**——zotero-mcp v0.3.0 不再暴露 `zotero_add_from_file`，PAI-C 无法把孤立 PDF 当作新 item 创建。如果某篇既无 DOI 也无 arxiv_id（极少见——`/paic-search` 出来的论文一般都至少有其一），请先在 Zotero 端手动加进去；后续 PAI-C 拿到 DOI/arxiv_id 后再走 priority 1/2 同步即可。
+> **优先级 3 的格式约束**：`zotero_add_from_file` 上游白名单 `.pdf / .epub / .djvu / .doc / .docx / .odt / .rtf`。arxiv 论文 SKILL 默认的本地存档是 `.md`（arxiv MCP 抽 markdown），**不会**走优先级 3——它一定有 arxiv_id，走优先级 2 即可。所以优先级 3 主要兜底「s2 / SSRN / google_scholar 等没 DOI 也没 arxiv_id、但用户已经手动 / 或 paper-search-mcp 拿到 PDF」的论文。
+>
+> **本地 PDF 路径必须是绝对路径**——zotero-mcp 校验 `os.path.isabs(file_path)`，传相对路径会拒收。SKILL 内部用 `pathlib.Path(...).resolve()` 规范化。
 
 ### 自动加的 tags
 
@@ -192,8 +196,10 @@ PAI-C → Zotero 是**单向**，不维护反向同步。这意味着：
 | zotero 调用报 `connection refused` | Zotero 桌面 app 没开 / 本地 API 被禁 | 启动 Zotero；`Test-NetConnection localhost 23119` 验证；查 `extensions.zotero.httpServer.enabled` |
 | `ZOTERO_LIBRARY_ID not set` | 选了 Web API 但 env 缺一个字段 | 检查 `~/.claude.json` zotero 段四个 env 都有；重启 |
 | collection 一直建不上 | 同名 collection race / 权限 | 改名重试；group library 检查 API key 有 read+write 权限 |
-| 同一篇被建了副本 | 走了 `zotero_add_from_file`（无 DOI 路径） + Zotero 没抽到 DOI | 对该篇手动在 Zotero 里 merge duplicates |
-| SKILL 报 `zotero_skipped: no_doi_no_arxiv` | 论文 metadata 里 doi / arxiv_id 都为空 | 直接在 Zotero 端手动加这一篇；之后 PAI-C 重 ingest 同一篇时会按 metadata 走 priority 1/2 同步 |
+| 同一篇被建了副本 | 走了优先级 3（`zotero_add_from_file`）但 zotero-mcp 没从 PDF 头页抽到 DOI，又跟已有的 DOI item 撞上了 | 在 Zotero 里用 `zotero_find_duplicates` / 桌面端 Trash & Duplicate Items 视图 merge；或先给 `selected.yaml` 该篇补上 DOI，重 ingest 走优先级 1 自动去重 |
+| SKILL 报 `zotero_skipped: no_doi_no_arxiv_no_pdf` | 论文 metadata 里 doi / arxiv_id 都为空，本地也没下到 PDF | 给 `selected.yaml` 该篇补 DOI 或 arxiv_id 后重 ingest；或先在 Zotero 端手动加 |
+| SKILL 报 `local_pdf_unsupported_ext` | `pdf_local_path` 是 `.md`（arxiv markdown）等非白名单格式，但走到了优先级 3 | 该论文应该有 arxiv_id 走优先级 2——检查 `selected.yaml` 是否漏了 arxiv_id；若确实只有 markdown，先用 pandoc 转 PDF 再重 ingest |
+| `zotero_add_from_file` 报 `Symlinks are not allowed` 或 `file_path must be an absolute path` | PDF 路径是 symlink 或相对路径 | 把 PDF 实体放到 `library/pdfs/` 下；SKILL 已自动 `Path(...).resolve()`，触发该错通常是用户把 `pdfs/` 软链到外部目录 |
 
 ## 进阶
 
