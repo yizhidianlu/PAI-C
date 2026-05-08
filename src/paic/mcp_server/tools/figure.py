@@ -478,6 +478,7 @@ def figure_generate(
     except ImageBackendUnavailable as exc:
         return {"error": "image_backend_failed", "detail": str(exc)}
 
+    brief = _build_brief_metadata(slot_obj, paper_plan, claims_by_id)
     versions: list[dict[str, Any]] = []
     for img in images:
         label, png_path = save_version(
@@ -489,6 +490,7 @@ def figure_generate(
             model=backend.model,
             parent_version=None,
             extra={"revised_prompt": img.revised_prompt} if img.revised_prompt else None,
+            brief=brief,
         )
         versions.append(
             {
@@ -518,6 +520,7 @@ def figure_generate_with_prompt(
     description: str | None = None,
     free_slot: bool = False,
     n: int = 1,
+    brief: dict[str, Any] | None = None,
     backend: OpenAICompatibleImageBackend | None = None,
 ) -> dict[str, Any]:
     """Render an image using a host-supplied prompt (no LLM call).
@@ -525,6 +528,14 @@ def figure_generate_with_prompt(
     Pair with ``figure_generate`` host orchestration: host fills in the
     prompt string from the directive, then this tool feeds the prompt
     straight into the image backend without re-running prompt synthesis.
+
+    ``brief`` is the grounding-context snapshot the host directive
+    surfaced (``metadata.brief`` from figure_generate's directive). When
+    the host passes it through, it gets persisted into meta.yaml so a
+    later regen / audit can replay what claims and terminology produced
+    this image. When ``brief`` is None, we rebuild a best-effort snapshot
+    from the current paper_plan.yaml + claims.yaml — covers callers that
+    skip the brief plumbing.
     """
     paths_or_err = _open_project(project_dir)
     if isinstance(paths_or_err, dict):
@@ -558,6 +569,13 @@ def figure_generate_with_prompt(
     except ImageBackendUnavailable as exc:
         return {"error": "image_backend_failed", "detail": str(exc)}
 
+    # Prefer the brief the host directive carried (it captured exactly the
+    # context the prompt LLM saw). Fall back to a fresh snapshot when the
+    # caller didn't pass one — keeps audit trail intact for legacy callers.
+    if not brief:
+        paper_plan, claims_by_id = _load_brief_sources(paths)
+        brief = _build_brief_metadata(slot_obj, paper_plan, claims_by_id)
+
     versions: list[dict[str, Any]] = []
     for img in images:
         label, png_path = save_version(
@@ -569,6 +587,7 @@ def figure_generate_with_prompt(
             model=backend.model,
             parent_version=None,
             extra={"revised_prompt": img.revised_prompt} if img.revised_prompt else None,
+            brief=brief,
         )
         versions.append(
             {

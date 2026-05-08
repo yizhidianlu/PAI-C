@@ -130,6 +130,49 @@ def test_storage_versions_increment(project):
     assert meta["versions"][2]["parent_version"] == "v1"
 
 
+def test_storage_save_version_omits_brief_when_none(project):
+    """Backward compatibility: without brief= kwarg the version entry stays slim."""
+    from paic.workspace.paths import resolve_project
+
+    paths = resolve_project(str(project))
+    save_version(
+        paths, "teaser", b"png", kind="generate",
+        prompt="prompt", model="gpt-image-2",
+    )
+    meta = load_meta(paths, "teaser")
+    entry = meta["versions"][0]
+    assert "brief" not in entry, "brief key must not appear when None"
+
+
+def test_storage_save_version_persists_brief_snapshot(project):
+    """brief= kwarg writes the grounding snapshot under the version entry."""
+    from paic.workspace.paths import resolve_project
+
+    paths = resolve_project(str(project))
+    brief = {
+        "scene_description": "A robotic arm placing colored tiles.",
+        "supporting_claims": ["CL1", "CL2"],
+        "primary_claim_id": "CL1",
+        "claim_texts": {
+            "CL1": "First system to combine tile-placement with vision-language.",
+            "CL2": "Tiles are colored.",
+        },
+        "terminology_used": ["tile-placement", "vision-language"],
+    }
+    save_version(
+        paths, "teaser", b"png", kind="generate",
+        prompt="prompt", model="gpt-image-2", brief=brief,
+    )
+    meta = load_meta(paths, "teaser")
+    entry = meta["versions"][0]
+    assert entry["brief"] == brief
+    # Snapshot is independent of later mutations to the input dict
+    brief["primary_claim_id"] = "MUTATED"
+    meta_again = load_meta(paths, "teaser")
+    # yaml round-trip means we get back our original snapshot
+    assert meta_again["versions"][0]["brief"]["primary_claim_id"] == "CL1"
+
+
 def test_next_version_label_kinds(project):
     from paic.workspace.paths import resolve_project
 

@@ -106,8 +106,18 @@ def save_version(
     model: str,
     parent_version: str | None = None,
     extra: dict[str, Any] | None = None,
+    brief: dict[str, Any] | None = None,
 ) -> tuple[str, Path]:
-    """Persist a new version + update meta.yaml. Returns (label, png_path)."""
+    """Persist a new version + update meta.yaml. Returns (label, png_path).
+
+    ``brief`` is an optional snapshot of the grounding context active at
+    generation time — typically ``{scene_description, supporting_claims,
+    primary_claim_id, claim_texts, terminology_used}``. Stored under each
+    version entry's ``brief`` key so a regen / audit can replay what
+    claims and terminology the planner referenced even after claims.yaml
+    or paper_plan.yaml mutate downstream. ``None`` keeps the entry slim
+    (existing behavior — old plans without claims still work).
+    """
     sdir = _slot_dir(paths, slot)
     sdir.mkdir(parents=True, exist_ok=True)
     label = next_version_label(paths, slot, kind)
@@ -127,6 +137,8 @@ def save_version(
     }
     if extra:
         entry.update(extra)
+    if brief:
+        entry["brief"] = brief
     versions.append(entry)
     save_yaml(_meta_path(paths, slot), meta)
     return label, png_path

@@ -1461,6 +1461,7 @@ def paic_figure_generate_with_prompt(
     description: str | None = None,
     free_slot: bool = False,
     n: int = 1,
+    brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render an image using a host-supplied prompt (no LLM call).
 
@@ -1468,6 +1469,13 @@ def paic_figure_generate_with_prompt(
     ``figure_prompt`` node. The Skill obtains ``prompt`` from the host
     directive, then calls this tool to actually render via the configured
     image backend.
+
+    ``brief`` is the grounding-context snapshot (scene_description /
+    supporting_claims / primary_claim_id / claim_texts / terminology_used)
+    surfaced by the host directive's ``metadata.brief``. Pass it through
+    verbatim so it gets persisted into ``meta.yaml`` for audit / regen;
+    omit and the tool rebuilds a best-effort snapshot from current
+    paper_plan + claims yaml.
     """
     return figure_tools.figure_generate_with_prompt(
         project_dir,
@@ -1476,6 +1484,7 @@ def paic_figure_generate_with_prompt(
         description=description,
         free_slot=free_slot,
         n=n,
+        brief=brief,
     )
 
 
