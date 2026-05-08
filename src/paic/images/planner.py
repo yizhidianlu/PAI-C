@@ -120,23 +120,65 @@ def _gather_claim_context(paths: ProjectPaths) -> str:
 
 
 def _gather_paper_plan_context(paths: ProjectPaths) -> str:
-    """§quality phase 9 — surface contributions so the planner ensures every
-    contribution has at least one figure / table / algorithm or a stated
-    no_visual_reason."""
+    """§quality phase 9 — surface paper_plan grounding so the planner can:
+
+    1. Ensure every contribution has at least one figure / table / algorithm
+       or a stated no_visual_reason (claim coverage).
+    2. Use the canonical terminology / symbols verbatim in scene_descriptions
+       (avoids divergence from the compose chain which already enforces this
+       in latex/compose.py).
+    3. Anchor each slot's section_hint to the section's actual intent
+       (so the figure visually serves the argument that section makes).
+    """
     if not paths.paper_plan_yaml.is_file():
         return ""
     raw = load_yaml(paths.paper_plan_yaml, default={}) or {}
     if not isinstance(raw, dict):
         return ""
+
+    blocks: list[str] = []
+
     contribs = raw.get("contributions") or []
-    if not contribs:
-        return ""
-    lines = ["=== PAPER CONTRIBUTIONS (each MUST have >=1 figure / table / algorithm or no_visual_reason) ==="]
-    for c in contribs:
-        if not isinstance(c, dict):
-            continue
-        lines.append(f"- [{c.get('id', '?')}] {c.get('title', '')}: {c.get('description', '')}")
-    return "\n".join(lines)
+    if contribs:
+        lines = ["=== PAPER CONTRIBUTIONS (each MUST have >=1 figure / table / algorithm or no_visual_reason) ==="]
+        for c in contribs:
+            if not isinstance(c, dict):
+                continue
+            lines.append(f"- [{c.get('id', '?')}] {c.get('title', '')}: {c.get('description', '')}")
+        blocks.append("\n".join(lines))
+
+    section_plan = raw.get("section_plan") or []
+    if section_plan:
+        lines = ["=== SECTION INTENT (anchor each slot's section_hint to the section's actual argument) ==="]
+        for s in section_plan:
+            if not isinstance(s, dict):
+                continue
+            name = s.get("name", "?")
+            intent = s.get("intent", "")
+            lines.append(f"- {name}: {intent}")
+        blocks.append("\n".join(lines))
+
+    terminology = raw.get("terminology") or {}
+    if isinstance(terminology, dict) and terminology:
+        # Cap at 30 entries — long terminologies blow up the context window
+        # and the planner only needs the canonical vocabulary, not every gloss.
+        items = list(terminology.items())[:30]
+        lines = ["=== TERMINOLOGY (use these phrases verbatim in scene_description; do NOT substitute synonyms) ==="]
+        for term, gloss in items:
+            short_gloss = (gloss or "")[:80]
+            lines.append(f"- {term}: {short_gloss}")
+        blocks.append("\n".join(lines))
+
+    symbols = raw.get("symbols") or {}
+    if isinstance(symbols, dict) and symbols:
+        items = list(symbols.items())[:20]
+        lines = ["=== SYMBOLS (refer to these in scene_description if the figure visualizes any of them) ==="]
+        for sym, meaning in items:
+            short_meaning = (meaning or "")[:60]
+            lines.append(f"- {sym}: {short_meaning}")
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
 
 
 def _gather_paper_context(

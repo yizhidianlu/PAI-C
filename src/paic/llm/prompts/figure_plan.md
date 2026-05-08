@@ -30,6 +30,14 @@ Quality bar:
   English — vivid, concrete, ≤ 2 sentences. This is fed downstream to the
   image-prompt synthesizer; do not write API jargon ("masked latent
   diffusion") — write what a viewer would see.
+  - When the paper context block includes a ``TERMINOLOGY`` section, you
+    MUST use those phrases verbatim when referring to entities the paper
+    has named (don't substitute synonyms — the compose chain locks the
+    same vocabulary in the prose, the figure should match).
+  - When the paper context block includes a ``SECTION INTENT`` block,
+    align the slot's ``section_hint`` to a section whose intent the figure
+    visually supports — i.e. the figure should advance that section's
+    argument, not just decorate it.
 - ``caption_hint`` is a draft caption (≤ 25 words), human-readable. The
   user will polish it later.
 - ``rationale`` is a one-sentence "why this figure helps" — keeps the
