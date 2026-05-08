@@ -368,10 +368,22 @@ class RoutingConfig:
         ``LLMUnavailable``. Useful when ``default: anthropic.claude_agent_sdk``
         relies on a Claude Code login that may not be present — set
         ``fallback: anthropic.api_key`` and the router quietly switches over.
+
+    ``cross_model_evaluator`` (ARS-fusion P2-3): advisory flag the
+        compose_v2 pipeline reads. When True and the user hasn't already
+        routed ``compose_evaluator_*`` via ``overrides``, the
+        paic_draft_compose_v2 tool treats it as a request to wire a
+        second backend for the evaluator phases. The actual second
+        backend is selected by the user's routing — typically by
+        defining a second profile under ``providers.<name>`` and routing
+        ``compose_evaluator_setup`` / ``compose_evaluator_exec`` to it.
+        Default False — opt-in only when the user has a second LLM
+        backend configured.
     """
     default: str = "anthropic"
     overrides: dict[str, str] = field(default_factory=dict)
     fallback: str | None = None
+    cross_model_evaluator: bool = False
 
     def invalid_host_overrides(self) -> list[str]:
         """Return node labels routed to ``host`` that aren't in the
@@ -774,6 +786,7 @@ def _load_routing(raw: dict[str, Any]) -> RoutingConfig:
         default=block.get("default", "anthropic"),
         overrides={str(k): str(v) for k, v in overrides.items()},
         fallback=block.get("fallback"),
+        cross_model_evaluator=bool(block.get("cross_model_evaluator", False)),
     )
 
 

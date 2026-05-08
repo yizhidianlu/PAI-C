@@ -1,0 +1,21 @@
+{
+  "name": "paic",
+  "version": "0.2.0",
+  "description": "PAI-C — Paper All-in-Claude. STEM paper writing pipeline with multi-LLM router, multi-agent review (5-panel including Devil's Advocate), generator-evaluator 4-call compose, citation truthfulness gate (5-type hallucination + 7-mode AI failure checklist), Material Passport cross-session resume, and 11-stage end-to-end orchestrator. V0.2 = ARS-fusion V1.0 release.",
+  "author": {
+    "name": "PAI-C"
+  },
+  "homepage": "https://github.com/anthropics/claude-code",
+  "repository": "https://github.com/anthropics/claude-code",
+  "license": "MIT",
+  "keywords": [
+    "academic",
+    "research",
+    "paper-writing",
+    "stem",
+    "latex",
+    "citation-verification",
+    "multi-agent-review",
+    "claude-code"
+  ]
+}
