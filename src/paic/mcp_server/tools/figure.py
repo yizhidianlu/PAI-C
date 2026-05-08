@@ -36,7 +36,11 @@ from paic.images.planner import (
     plan_figures,
     verify_claim_coverage,
 )
-from paic.images.prompt import _ImagePromptOutput, synthesize_image_prompt
+from paic.images.prompt import (
+    _ImagePromptOutput,
+    build_figure_user_prompt,
+    synthesize_image_prompt,
+)
 from paic.images.storage import (
     figure_latex_snippet,
     latest_version,
@@ -76,6 +80,73 @@ def _load_plan(paths: ProjectPaths) -> dict[str, Any] | None:
     if not p.exists():
         return None
     return load_yaml(p, default={}) or {}
+
+
+def _load_brief_sources(paths: ProjectPaths) -> tuple[dict | None, dict[str, dict] | None]:
+    """Load paper_plan + claims as raw yaml dicts for figure-prompt grounding.
+
+    Returns (paper_plan_dict, claims_by_id) — either side is None when the
+    underlying yaml is missing or malformed (so callers don't have to guard
+    individually). claims_by_id is keyed by Claim.id for O(1) lookup in
+    build_figure_user_prompt.
+    """
+    paper_plan: dict | None = None
+    if paths.paper_plan_yaml.is_file():
+        raw = load_yaml(paths.paper_plan_yaml, default={}) or {}
+        if isinstance(raw, dict):
+            paper_plan = raw
+
+    claims_by_id: dict[str, dict] | None = None
+    if paths.claims_yaml.is_file():
+        raw = load_yaml(paths.claims_yaml, default={}) or {}
+        if isinstance(raw, dict):
+            claims_list = raw.get("claims") or []
+            if claims_list:
+                claims_by_id = {}
+                for c in claims_list:
+                    if isinstance(c, dict) and c.get("id"):
+                        claims_by_id[c["id"]] = c
+                if not claims_by_id:
+                    claims_by_id = None
+
+    return paper_plan, claims_by_id
+
+
+def _build_brief_metadata(
+    slot: FigureSlot,
+    paper_plan: dict | None,
+    claims_by_id: dict[str, dict] | None,
+) -> dict[str, Any]:
+    """Snapshot of the grounding context that produced an image prompt.
+
+    Persisted later by save_image_meta (commit 4) so a regen / audit of
+    the figure can replay what claim texts and terminology were active at
+    generation time, even after claims.yaml changes downstream.
+    """
+    brief: dict[str, Any] = {
+        "scene_description": slot.scene_description,
+        "section_hint": slot.section_hint,
+        "supporting_claims": list(slot.supporting_claims),
+        "primary_claim_id": slot.primary_claim_id,
+    }
+    if claims_by_id and slot.supporting_claims:
+        # Snapshot the claim texts the planner referenced — claims.yaml may
+        # mutate later; without this snapshot regen / audit cannot reconstruct
+        # what the LLM actually saw.
+        snapshot: dict[str, str] = {}
+        for cid in slot.supporting_claims:
+            claim = claims_by_id.get(cid)
+            if claim and claim.get("text"):
+                snapshot[cid] = claim["text"]
+        if snapshot:
+            brief["claim_texts"] = snapshot
+    if paper_plan:
+        terminology = paper_plan.get("terminology") or {}
+        if isinstance(terminology, dict) and terminology:
+            # Only the keys (the canonical phrases) — gloss is a regen-time
+            # detail that's not worth duplicating into every figure's meta.
+            brief["terminology_used"] = list(terminology.keys())[:30]
+    return brief
 
 
 def _slot_from_plan(plan: dict[str, Any], slot_name: str) -> FigureSlot | None:
@@ -343,33 +414,42 @@ def figure_generate(
         return backend_or_err
     backend = backend_or_err
 
+    paper_plan, claims_by_id = _load_brief_sources(paths)
+
     from paic.config import load_config
     cfg = load_config()
     router = LLMRouter(cfg)
     if router.is_host_orchestrated("figure_prompt"):
         # Host generates the image prompt; we then pass it to
         # ``paic_figure_generate_with_prompt`` to actually render via the
-        # configured image backend.
-        user_parts = [
-            f"slot: {slot_obj.slot}",
-            f"kind: {slot_obj.kind}",
-            f"section: {slot_obj.section_hint}",
-            f"scene_description: {slot_obj.scene_description}",
-            f"caption_hint: {slot_obj.caption_hint}",
-        ]
-        extra = description if not free_slot else None
-        if extra:
-            user_parts.append(f"extra_instruction: {extra}")
+        # configured image backend. The user_prompt mirrors the cloud path
+        # exactly (build_figure_user_prompt is the single source of truth)
+        # so the host sees the same supporting_claims / section_intent /
+        # terminology blocks the cloud LLM would have.
+        user_prompt = build_figure_user_prompt(
+            slot_obj,
+            paper_plan=paper_plan,
+            claims_by_id=claims_by_id,
+            extra_instruction=description if not free_slot else None,
+        )
+        brief_metadata = _build_brief_metadata(slot_obj, paper_plan, claims_by_id)
         return build_host_directive(
             node="figure_prompt",
             instructions=(
                 "Synthesize a single image-generation prompt matching "
-                "`schema_hint`. Then call "
+                "`schema_hint`. The user_prompt below contains the figure "
+                "brief: scene description plus (when present) the supporting "
+                "claims to visually reinforce, the section intent the figure "
+                "must serve, and the paper's locked terminology. Embed claim "
+                "*meanings* visually — do NOT render claim ids as text in "
+                "the image. Then call "
                 "mcp__paic__paic_figure_generate_with_prompt with the "
                 "`prompt` value plus the original `slot` / `n` / `free_slot` "
-                "/ `description` from `metadata`."
+                "/ `description` from `metadata` (also pass `brief` from "
+                "`metadata` straight through so it gets snapshotted into "
+                "meta.yaml for audit / regen)."
             ),
-            user_prompt="\n".join(user_parts),
+            user_prompt=user_prompt,
             schema_hint=_ImagePromptOutput.model_json_schema(),
             next_tool="mcp__paic__paic_figure_generate_with_prompt",
             metadata={
@@ -377,13 +457,18 @@ def figure_generate(
                 "n": n,
                 "free_slot": free_slot,
                 "description": description,
+                "brief": brief_metadata,
             },
         ).to_dict()
 
     client = llm or get_default_client()
     try:
         image_prompt = synthesize_image_prompt(
-            client, slot_obj, extra_instruction=description if not free_slot else None
+            client,
+            slot_obj,
+            paper_plan=paper_plan,
+            claims_by_id=claims_by_id,
+            extra_instruction=description if not free_slot else None,
         )
     except Exception as exc:  # noqa: BLE001
         return {"error": "prompt_synthesis_failed", "detail": repr(exc)}

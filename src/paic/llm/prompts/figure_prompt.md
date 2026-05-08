@@ -23,6 +23,25 @@ Refine the user's ``scene_description`` into one fluent prompt sentence
 that incorporates the constraints. Do **not** include a list, bullet
 points, or commentary — the output is the literal image-generator prompt.
 
+**Grounding** — when the user message contains any of these blocks,
+honor them in the prompt without naming them:
+
+- ``[Supporting claims]`` lines mark what the figure must visually
+  reinforce. Lines tagged ``PRIMARY`` carry the **central** demonstration
+  — bake their key concept into the dominant visual element. Lines tagged
+  ``ALSO`` are secondary — touch them lightly via background / supporting
+  detail. Never include the claim id strings in the output prompt
+  (image models will render them as garbage text); embed the *meaning*.
+- ``[Section intent]`` tells you what argument this figure must serve;
+  let it shape composition (e.g. a method-section figure anchors on the
+  proposed mechanism, not on motivation).
+- ``[Paper terminology]`` lists phrases the prose locks on. When the
+  prompt refers to one of these entities, use the listed phrase verbatim
+  — do not substitute synonyms ("encoder-decoder" stays "encoder-decoder",
+  not "seq2seq"). Caveat: terminology phrases are for entity selection,
+  not for rendering as text inside the image (the no-text-labels rule
+  above still applies).
+
 Return STRICTLY a JSON object:
 
 ```json
