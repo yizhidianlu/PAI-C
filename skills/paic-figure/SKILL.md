@@ -50,6 +50,11 @@ allowed-tools: mcp__paic__paic_figure_plan, mcp__paic__paic_figure_generate, mcp
 2. Call `mcp__paic__paic_figure_generate(project_dir=<cwd>, slot=<slot_name>)`.
    - 若返回 `error: images_disabled` → 提示用户在 `~/.paic/config.yaml` 里加 `providers.images` 块（enabled: true / model: gpt-image-1 / base_url: <relay> / api_key_env: <env>）然后**完全重启 Claude Code**。
    - 若返回 `error: image_backend_failed` → 把 `detail` 字段贴给用户（中转站具体错误），让用户决定换 model 还是换 base_url。
+   - **若返回 `mode: "host_orchestration"`** （`figure_prompt` 节点路由到 host 时触发——见 [configuration.md § 节点路由表](../docs/configuration.md#节点路由表)）：
+     - `user_prompt` 字段含 figure brief：scene description、`[Supporting claims]`（PRIMARY/ALSO 标记）、`[Section intent]`、`[Paper terminology]` 等块。**读这些块**作为 grounding——image prompt 必须把 PRIMARY claim 的核心概念视觉化、用 terminology 列表里的词指代实体（不要直接把 claim id 写进 prompt，模型会把 id 当文字渲染）。
+     - 写出最终 image prompt（≤500 字符），按 `schema_hint` 返回 `{"prompt": "..."}`。
+     - 调 `mcp__paic__paic_figure_generate_with_prompt(project_dir=<cwd>, slot=<metadata.slot>, prompt=<你写的>, n=<metadata.n>, free_slot=<metadata.free_slot>, description=<metadata.description>, brief=<metadata.brief>)`。
+     - **`brief=<metadata.brief>` 必须透传**——它是 directive 里附带的 grounding 快照（scene_description / supporting_claims / primary_claim_id / claim_texts / terminology_used），写进 `meta.yaml` 让后续 regen / audit 能追溯当时绑的是哪些 claim。**漏传 brief 不影响生成**，但 meta.yaml 里就只剩 best-effort 重建（次优）。
 
 3. 渲染响应（中文）：
    ```
@@ -110,3 +115,5 @@ allowed-tools: mcp__paic__paic_figure_plan, mcp__paic__paic_figure_generate, mcp
 - **gpt-image-1 不支持原生 variations**：variant 走 edits 端点 + "alternative variation" prompt 模拟，质量略不如 dall-e-2 的原生 variations，但 gpt-image-1 的 base 质量高很多，整体仍占优。
 - **多次 edit 会偏移**：edit 是基于上一版的，连续 edit 3-4 次画面可能彻底偏离原意。建议每个 slot 至多 edit 2 次；不满意就回去改 `scene_description` 重新 generate。
 - **path 是 project-relative**：返回的 `latex_snippet` 用 `figures/<slot>/<version>.png`，要求 LaTeX build root 是项目根目录（PAI-C 默认 scaffold 满足）。如果你把 `.tex` 移到了别处编译，需要相应调整路径。
+- **prompt 与论文内容失联**：默认 host orchestration 模式下 PAI-C 会把 paper_plan + claims（含 `supporting_claims` / `primary_claim_id` / `terminology` / `section_intent`）拼进 `user_prompt`。如果生成出来的 image 跟论文 claim 仍然没关系，**先检查 `_plan.yaml` 该 slot 是否有非空 `supporting_claims` + `primary_claim_id`**——空的就是 plan 阶段没绑（重 plan 即可）；非空但生成跑偏则可能是主对话写 prompt 时没读 `[Supporting claims]` 块（参考 Step 2 第 2 条）。生成后的 `figures/<slot>/meta.yaml` `brief.supporting_claims` 字段是 ground truth：缺该字段说明 brief 没透传（Step 2 host-orch 那条要传 `brief=<metadata.brief>`）。
+- **`figure_brief_drift` 报警**：`/paic-finalize` 跑出 `figure_brief_drift` 表示这张图当时绑的 claim ≠ 当前 plan 的 claim——意味着 plan 改过、图未跟。重跑一次该 slot 的 `paic_figure_generate` 即对齐；或者 `overrides=["figure_brief_drift"]` 接受暂时不齐。
