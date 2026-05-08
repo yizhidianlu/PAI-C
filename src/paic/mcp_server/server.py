@@ -14,9 +14,11 @@ from mcp.server.fastmcp import FastMCP
 from paic import __version__
 from paic.mcp_server.tools import attach as attach_tools
 from paic.mcp_server.tools import claims as claims_tools
+from paic.mcp_server.tools import disclosure as disclosure_tools
 from paic.mcp_server.tools import draft as draft_tools
 from paic.mcp_server.tools import experiment as experiment_tools
 from paic.mcp_server.tools import figure as figure_tools
+from paic.mcp_server.tools import format_convert as format_convert_tools
 from paic.mcp_server.tools import ideate as ideate_tools
 from paic.mcp_server.tools import integrity as integrity_tools
 from paic.mcp_server.tools import library as library_tools
@@ -97,6 +99,95 @@ def paic_workspace_status(project_dir: str | None = None) -> dict[str, Any]:
     in-flight LangGraph runs.
     """
     return workspace_tools.workspace_status(project_dir)
+
+
+# --- Format-convert + Disclosure (ARS-fusion P0-3) -------------------------
+
+@mcp.tool()
+def paic_format_convert(
+    project_dir: str,
+    input_path: str,
+    output_path: str,
+    target_format: str | None = None,
+    citation_style: str | None = None,
+    bibliography: str | None = None,
+    from_format: str | None = None,
+) -> dict[str, Any]:
+    """Convert a manuscript file via Pandoc (ARS-fusion P0-3).
+
+    Pandoc is a weak dependency — missing pandoc returns
+    ``error: pandoc_unavailable`` with install instructions instead of
+    crashing. For PDF output a LaTeX engine (TeX Live / MikTeX /
+    Tectonic) is also required.
+
+    Supported conversions: Markdown / LaTeX / DOCX / PDF / HTML in any
+    pair pandoc can handle. Citation styles: pass ``citation_style`` to
+    re-render cites (``apa7`` / ``chicago`` / ``mla9`` / ``ieee`` /
+    ``vancouver``). CSL files are not vendored in v1; place ``<id>.csl``
+    files under ``~/.paic/csl/`` (or ``$PAIC_CSL_DIR``) — without a CSL
+    file pandoc falls back to its built-in default style.
+
+    ``input_path`` / ``output_path`` accept absolute paths or paths
+    relative to ``project_dir``. ``bibliography`` defaults to
+    ``<project>/.paic/drafts/refs.bib`` when present.
+    """
+    return format_convert_tools.format_convert_tool(
+        project_dir,
+        input_path=input_path,
+        output_path=output_path,
+        target_format=target_format,
+        citation_style=citation_style,
+        bibliography=bibliography,
+        from_format=from_format,
+    )
+
+
+@mcp.tool()
+def paic_disclosure_generate(
+    project_dir: str,
+    venue: str,
+    tools: list[dict[str, Any]],
+    paper_title: str | None = None,
+    author_responsibility_note: str | None = None,
+    raise_equity_note: str | None = None,
+    extra_lines: list[str] | None = None,
+    output_format: str = "markdown",
+    write_to: str | None = None,
+) -> dict[str, Any]:
+    """Render a venue-specific AI usage disclosure paragraph (ARS-fusion P0-3).
+
+    Pure template render via Jinja2 — no LLM call. Six built-in
+    venue templates: ``iclr2026`` / ``neurips2026`` / ``nature`` /
+    ``science`` / ``acl`` / ``emnlp`` plus ``generic`` fallback. Each
+    template embeds the RAISE-framework fields the venue's policy
+    expects (e.g. NeurIPS asks for explicit human-responsibility
+    statement; Nature emphasises Methods / Supplementary placement).
+
+    ``tools`` is the canonical inventory: list of dicts each with
+    ``name`` / ``stage`` / ``extent`` / ``purpose`` keys. Stages:
+    ``ideation`` / ``literature_review`` / ``drafting`` / ``analysis``
+    / ``revision`` / ``formatting``. Extents: ``minor`` / ``moderate``
+    / ``extensive``.
+
+    Optional ``write_to`` (relative or absolute path) writes the
+    rendered text to that file in addition to returning it.
+
+    Returns ``{venue, output_format, content, placement_hint, warnings,
+    template_path, written_to?, supported_venues}``. ``placement_hint``
+    is a venue-specific instruction on where in the paper the disclosure
+    must appear.
+    """
+    return disclosure_tools.disclosure_generate_tool(
+        project_dir,
+        venue=venue,
+        tools=tools,
+        paper_title=paper_title,
+        author_responsibility_note=author_responsibility_note,
+        raise_equity_note=raise_equity_note,
+        extra_lines=extra_lines,
+        output_format=output_format,
+        write_to=write_to,
+    )
 
 
 # --- Library tools ---------------------------------------------------------

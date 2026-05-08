@@ -1,0 +1,17 @@
+## AI Usage Disclosure (ICLR 2026)
+
+In compliance with the ICLR 2026 AI Usage Disclosure policy, we report the
+following AI tools used in the preparation of this submission{% if paper_title %} ("{{ paper_title }}"){% endif %}:
+
+{% for tool in tools %}- **{{ tool.name }}** — {{ tool.stage }} ({{ tool.extent }} use). {{ tool.purpose }}
+{% endfor %}
+
+{{ author_responsibility_note }} No AI tool is listed as an author. All
+AI-assisted text was reviewed by the authors before inclusion. We did not
+use AI to generate experimental results, fabricate data, or invent
+references.
+
+{% if raise_equity_note %}{{ raise_equity_note }}
+
+{% endif %}{% for line in extra_lines %}{{ line }}
+{% endfor %}

@@ -1,0 +1,17 @@
+## AI Usage Disclosure (EMNLP Responsible NLP)
+
+Following the EMNLP responsible NLP research guidelines, we disclose AI
+tool usage in the preparation of this paper{% if paper_title %} ("{{ paper_title }}"){% endif %}:
+
+{% for tool in tools %}- **{{ tool.name }}** — used during *{{ tool.stage }}* ({{ tool.extent }} use). Role: {{ tool.purpose }}
+{% endfor %}
+
+**Limitations note.** {{ author_responsibility_note }} We do not claim
+that AI improved the objectivity of the literature review, and we
+verified all AI-assisted output. AI tools were not used to generate
+empirical NLP evaluation results.
+
+{% if raise_equity_note %}{{ raise_equity_note }}
+
+{% endif %}{% for line in extra_lines %}{{ line }}
+{% endfor %}

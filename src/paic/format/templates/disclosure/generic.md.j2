@@ -1,0 +1,13 @@
+## AI Usage Disclosure
+
+{% if paper_title %}For "{{ paper_title }}", the authors used the following AI tools:{% else %}The authors used the following AI tools in preparing this manuscript:{% endif %}
+
+{% for tool in tools %}- **{{ tool.name }}** — {{ tool.stage }}, {{ tool.extent }} use. Purpose: {{ tool.purpose }}
+{% endfor %}
+
+{{ author_responsibility_note }}
+
+{% if raise_equity_note %}{{ raise_equity_note }}
+
+{% endif %}{% for line in extra_lines %}{{ line }}
+{% endfor %}

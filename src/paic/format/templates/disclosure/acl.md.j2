@@ -1,0 +1,17 @@
+## AI Usage Disclosure (ACL Responsible NLP Checklist)
+
+In compliance with the ACL Rolling Review responsible NLP research
+checklist, we report the following AI tools used in this work{% if paper_title %} ("{{ paper_title }}"){% endif %}:
+
+{% for tool in tools %}- **{{ tool.name }}** — {{ tool.stage }}, {{ tool.extent }} use. NLP task / role: {{ tool.purpose }}
+{% endfor %}
+
+{{ author_responsibility_note }} AI tools were not used to claim novel
+linguistic insights without human verification, and we did not use AI to
+generate empirical NLP evaluation results. The authors verified all
+AI-generated text prior to inclusion.
+
+{% if raise_equity_note %}{{ raise_equity_note }}
+
+{% endif %}{% for line in extra_lines %}{{ line }}
+{% endfor %}

@@ -1,0 +1,18 @@
+## AI Usage Disclosure (NeurIPS 2026 Reproducibility / Broader Impact)
+
+Per NeurIPS 2026 author-guide requirements, we explicitly list every AI tool
+used in the preparation of this paper{% if paper_title %} ("{{ paper_title }}"){% endif %}, the stage at which it was used, and its specific role:
+
+{% for tool in tools %}- **{{ tool.name }}** — used during *{{ tool.stage }}* ({{ tool.extent }} use). Specific role: {{ tool.purpose }}
+{% endfor %}
+
+**Human responsibility statement.** {{ author_responsibility_note }} The
+authors take full responsibility for the scientific content, methodological
+soundness, and accuracy of the empirical claims. We did not use AI to
+generate experimental results, fabricate citations, or substitute for
+human judgment in interpreting findings.
+
+{% if raise_equity_note %}**Equity note.** {{ raise_equity_note }}
+
+{% endif %}{% for line in extra_lines %}{{ line }}
+{% endfor %}

@@ -50,6 +50,9 @@ packages = ["src/paic"]
 "src/paic/latex/templates" = "paic/latex/templates"
 "src/paic/llm/prompts" = "paic/llm/prompts"
 "src/paic/personas" = "paic/personas"
+# ARS-fusion P0-3: ship Jinja2 disclosure templates (CSL placeholder
+# directory ships too — empty for now, users drop styles into ~/.paic/csl/).
+"src/paic/format/templates" = "paic/format/templates"
 # NOTE: src/paic/web/ is an out-of-tree local workbench (intentionally
 # never tracked). It is NOT shipped with the wheel and has no entry-point;
 # run it locally via ``python -m paic.web.server`` if you have the dir.

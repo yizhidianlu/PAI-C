@@ -1,0 +1,16 @@
+## Acknowledgment of AI Tool Usage
+
+For the preparation of this manuscript{% if paper_title %} ("{{ paper_title }}"){% endif %}, the authors used:
+
+{% for tool in tools %}- {{ tool.name }} — {{ tool.stage }} ({{ tool.extent }} use); {{ tool.purpose }}
+{% endfor %}
+
+{{ author_responsibility_note }} Per Science's authorship policy, no AI
+tool is listed as an author of this work. The authors verified all
+AI-assisted content prior to inclusion and accept full responsibility
+for the accuracy and integrity of the manuscript.
+
+{% if raise_equity_note %}{{ raise_equity_note }}
+
+{% endif %}{% for line in extra_lines %}{{ line }}
+{% endfor %}

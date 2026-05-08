@@ -1,0 +1,18 @@
+## AI Usage (Methods / Supplementary)
+
+In line with Nature's editorial policy on the use of large language models
+and other AI tools, we disclose the following uses{% if paper_title %} for "{{ paper_title }}"{% endif %}:
+
+{% for tool in tools %}- **{{ tool.name }}** ({{ tool.extent }} use during {{ tool.stage }}): {{ tool.purpose }}
+{% endfor %}
+
+{{ author_responsibility_note }} AI tools were not used to generate primary
+research data, design experimental protocols, or substitute for human
+scientific reasoning. AI-generated text was reviewed and edited by the
+authors prior to inclusion. AI is not listed as an author and no AI tool
+holds responsibility for the integrity of the work.
+
+{% if raise_equity_note %}{{ raise_equity_note }}
+
+{% endif %}{% for line in extra_lines %}{{ line }}
+{% endfor %}
