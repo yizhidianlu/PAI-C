@@ -89,6 +89,9 @@ def _slot_from_plan(plan: dict[str, Any], slot_name: str) -> FigureSlot | None:
                 scene_description=entry.get("scene_description", ""),
                 caption_hint=entry.get("caption_hint", ""),
                 rationale=entry.get("rationale", ""),
+                supporting_claims=tuple(entry.get("supporting_claims") or ()),
+                primary_claim_id=entry.get("primary_claim_id"),
+                no_visual_reason=entry.get("no_visual_reason"),
             )
     return None
 
@@ -277,6 +280,7 @@ def figure_plan_persist(
             caption_hint=s.caption_hint,
             rationale=s.rationale,
             supporting_claims=tuple(s.supporting_claims),
+            primary_claim_id=s.primary_claim_id,
             no_visual_reason=s.no_visual_reason,
         )
         for s in deduped

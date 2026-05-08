@@ -43,6 +43,12 @@ includes a CLAIM LEDGER and / or PAPER CONTRIBUTIONS section):
   with that contribution / its claim ids in ``supporting_claims``, OR by
   a slot whose ``no_visual_reason`` is set (theoretical-only result,
   closed-source tool, etc).
+- ``primary_claim_id`` (NEW): pick **exactly one** id from
+  ``supporting_claims`` that this figure must visually demonstrate above
+  all others — this drives the downstream image-prompt synthesizer's
+  emphasis (PRIMARY visual hint vs ALSO/secondary). Set to ``null`` only
+  when the figure serves the whole paper without a single primary claim
+  (e.g. teaser metaphor) — and explain in ``rationale``.
 - Decorative slots without claim binding are fine *only* when the
   contribution count is already satisfied. Otherwise tag the closest
   contribution.
@@ -64,6 +70,7 @@ Return STRICTLY a JSON object matching:
       "caption_hint": "...",
       "rationale": "...",
       "supporting_claims": ["C1", "CL2"],
+      "primary_claim_id": "C1",
       "no_visual_reason": null
     }
   ]

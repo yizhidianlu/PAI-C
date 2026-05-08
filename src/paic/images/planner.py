@@ -36,6 +36,11 @@ class FigureSlot:
     # §quality phase 9 — claim-driven figure planning. Defaults preserve
     # backward compatibility with pre-phase-9 plans on disk.
     supporting_claims: tuple[str, ...] = ()
+    # The single most important claim this figure must visually demonstrate
+    # (one id from supporting_claims, or None when the figure serves the
+    # whole paper / has no single primary claim — typical for teasers).
+    # The prompt synthesizer treats it as PRIMARY emphasis vs ALSO/secondary.
+    primary_claim_id: str | None = None
     no_visual_reason: str | None = None
 
     def to_dict(self) -> dict:
@@ -49,6 +54,8 @@ class FigureSlot:
             "rationale": self.rationale,
             "supporting_claims": list(self.supporting_claims),
         }
+        if self.primary_claim_id:
+            d["primary_claim_id"] = self.primary_claim_id
         if self.no_visual_reason:
             d["no_visual_reason"] = self.no_visual_reason
         return d
@@ -63,6 +70,7 @@ class _FigureSlotOut(BaseModel):
     caption_hint: str = ""
     rationale: str = ""
     supporting_claims: list[str] = Field(default_factory=list)
+    primary_claim_id: str | None = None
     no_visual_reason: str | None = None
 
 
@@ -225,6 +233,7 @@ def plan_figures(
             caption_hint=s.caption_hint,
             rationale=s.rationale,
             supporting_claims=tuple(s.supporting_claims),
+            primary_claim_id=s.primary_claim_id,
             no_visual_reason=s.no_visual_reason,
         )
         for s in deduped
