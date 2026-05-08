@@ -1,7 +1,7 @@
 ---
 name: paic-draft
 description: LaTeX writing — v0.1 fills a venue template (built-in cvpr/neurips/ieee, or any project-local template under .paic/templates/); v0.2 polishes individual sections via LLM rewrite (tighten / clarify / formalize / expand / proofread); v0.3 composes full sections from idea + experiment + library with auto citation alignment. Optionally syncs the resulting drafts/ tree bidirectionally with an Overleaf-linked Dropbox folder. Use when the user says "起 LaTeX 骨架" / "draft the paper" / "改一下 intro" / "compose 一段 related work".
-allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_draft_sync_overleaf, mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_status, mcp__paic__paic_library_retrieve, mcp__paic__paic_claims_init, mcp__paic__paic_claims_validate, mcp__paic__paic_claims_list
+allowed-tools: mcp__paic__paic_draft_fill, mcp__paic__paic_draft_list_templates, mcp__paic__paic_draft_scaffold, mcp__paic__paic_draft_polish, mcp__paic__paic_draft_polish_persist, mcp__paic__paic_draft_compose, mcp__paic__paic_draft_compose_persist, mcp__paic__paic_draft_compose_v2, mcp__paic__paic_draft_sync_overleaf, mcp__paic__paic_workspace_status, mcp__paic__paic_paper_plan_status, mcp__paic__paic_library_retrieve, mcp__paic__paic_claims_init, mcp__paic__paic_claims_validate, mcp__paic__paic_claims_list
 ---
 
 # /paic-draft — LaTeX writing
@@ -13,6 +13,7 @@ PAI-C ships LaTeX support in **3 stages** — all live now:
 - **v0.1: `fill`** — populate a template skeleton from idea + experiment + bib.
 - **v0.2: `polish`** — paragraph-level LLM rewrites of an existing section. 5 modes (tighten / clarify / formalize / expand / proofread) + freeform instruction.
 - **v0.3: `compose`** — full-section composition from idea + experiment + library with auto citation alignment. 2 modes (from_stub / from_scratch) + freeform instruction.
+- **v0.4: `compose-v2`** (ARS-fusion P1-1) — Generator-Evaluator 4-call compose: writer paper-blind pre-commitment → writer paper-visible execution → evaluator paper-blind rubric → evaluator paper-visible scoring. Defeats silent quality drift. Default ON for critical sections; cost ~3× v1.
 
 ## Flow — v0.1 fill
 
@@ -322,6 +323,32 @@ c. 有 `conflicts` 或 `deletions_pending`：详细列出每条 + 处理方案�
 如果用户**只想 push** 本地到 Overleaf（比如不想拉 Overleaf 端的 typo fix）→
 `direction="push_only"`；**只想 pull**（比如刚在 Overleaf 大改了一通、把改动拉回
 本地继续 PAI-C 操作）→ `direction="pull_only"`。默认 `auto` 双向。
+
+## v0.4 — compose-v2 generator-evaluator 4-call (ARS-fusion P1-1)
+
+```text
+/paic-draft compose-v2 03_method --idea <id> --experiment <id>
+/paic-draft compose-v2 03_method --strict false   # 退到 v1 single-call
+/paic-draft compose-v2 03_method --cross-model    # writer / evaluator 走不同 backend
+/paic-draft compose-v2 03_method --write          # 审完直接写盘
+```
+
+调 `mcp__paic__paic_draft_compose_v2(project_dir=<cwd>, section=<name>, ...)`。**默认 strict=True**（4-call 全开）：
+
+- **Phase 4a writer plan** — paper-blind，仅看 contract（section name + 5 dimensions + library_cite_keys）→ commit acceptance criteria + intended claims + cite_keys
+- **Phase 4b writer exec** — 看 contract + 4a commitment + paper context（plan/idea/experiment 摘要）→ 写 LaTeX
+- **Phase 6a evaluator setup** — 仅看 contract + 4a commitment（**看不到 4b draft**）→ pre-commit per-dimension scoring rubric
+- **Phase 6b evaluator exec** — 看 contract + 4a + 4b + 6a rubric → score + decision
+
+**返回**：完整 4-phase audit JSON + `divergences`（cite_drift / score_divergence / commitment_breach）。**默认不写盘**——`write=True` 才落 `composed_text` 到文件。
+
+**成本预告**：strict=True 比 v1 贵 2-3×（4 LLM calls），延迟 ~2-3×。短 section（intro / abstract）可用；长 section（method / experiments）建议先 `--strict=false` 跑迭代版，定稿前 `--strict=true` 一遍。
+
+**Cross-model evaluator**（P2-3 钩子）：`cross_model_evaluator=True` 让 evaluator phases 6a/6b 走不同 backend。需在 `~/.paic/config.yaml` 配两个 LLM profiles 并设 `routing.overrides.compose_evaluator_setup` / `compose_evaluator_exec` 到第二个 profile。
+
+**何时用 v2 vs v1**：
+- 投稿 critical section（method / experiments / contribution 段落）→ v2
+- 早期迭代 / 随手改 / 短补丁 → v1（`/paic-draft compose` 或 `compose-v2 --strict=false`）
 
 ## Style
 - 中文叙述。LaTeX 文件路径与命令保留原样，不要翻译。

@@ -90,6 +90,43 @@ class LLMClient:
             temperature=temperature,
         )
 
+    def complete_isolated(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: type[T],
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+        node: str | None = None,
+    ) -> T:
+        """Call the backend with the strongest available conversation isolation
+        (ARS-fusion P1-1 generator-evaluator contract).
+
+        Each call MUST start with a fresh conversation context — no
+        carry-over of prior system / user / assistant turns. For
+        backends that already construct a stateless request per call
+        (Anthropic Messages, OpenAI ChatCompletions), this is identical
+        to ``complete_json``. For backends that maintain conversation
+        state internally (e.g. Claude Agent SDK), this is the hook to
+        force a fresh agent / session per phase.
+
+        V1.0 ships with the simple delegation; future patches will add
+        per-backend ``new_conversation()`` semantics where needed.
+        """
+        # Today: identical wire effect to complete_json because
+        # Anthropic / OpenAI backends are stateless per call. The
+        # function exists so the 4-call compose pipeline has a single
+        # contract surface to upgrade when SDK-state backends ship a
+        # fresh-conversation knob.
+        return self._backend_for(node).complete_json(
+            system=system,
+            user=user,
+            schema=schema,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
     @property
     def router(self) -> LLMRouter | None:
         """The internal router, or ``None`` if a fixed backend was supplied."""

@@ -328,6 +328,12 @@ HOST_SUPPORTED_NODES: frozenset[str] = frozenset(
         # ARS-fusion §revision-coach (P0-2) — parses arbitrary external
         # reviewer text into RevisionTask queue.
         "revision_parse_external",
+        # ARS-fusion §generator-evaluator 4-call (P1-1) — each phase is
+        # an independent LLM call with the contract baseline.
+        "compose_writer_plan",
+        "compose_writer_exec",
+        "compose_evaluator_setup",
+        "compose_evaluator_exec",
         # In-graph nodes — pause via ``llm_or_interrupt`` and resume on ``*_step``.
         "ideate_brainstorm",
         "idea_score_methodology",

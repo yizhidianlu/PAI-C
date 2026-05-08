@@ -16,6 +16,7 @@ from paic.mcp_server.tools import attach as attach_tools
 from paic.mcp_server.tools import claims as claims_tools
 from paic.mcp_server.tools import disclosure as disclosure_tools
 from paic.mcp_server.tools import draft as draft_tools
+from paic.mcp_server.tools import draft_compose_v2 as draft_compose_v2_tools
 from paic.mcp_server.tools import experiment as experiment_tools
 from paic.mcp_server.tools import figure as figure_tools
 from paic.mcp_server.tools import format_convert as format_convert_tools
@@ -1465,6 +1466,62 @@ def paic_draft_compose(
         target_words=target_words,
         instruction=instruction,
         dry_run=dry_run,
+    )
+
+
+@mcp.tool()
+def paic_draft_compose_v2(
+    project_dir: str,
+    section: str,
+    idea_id: str | None = None,
+    experiment_id: str | None = None,
+    target_words: int | None = None,
+    instruction: str | None = None,
+    strict: bool = True,
+    cross_model_evaluator: bool = False,
+    write: bool = False,
+) -> dict[str, Any]:
+    """Generator-Evaluator 4-call compose (ARS-fusion P1-1).
+
+    Wraps the v3.6.6-style 4-phase pipeline:
+    - phase 4a writer paper-blind pre-commitment (sprint contract +
+      acceptance criteria + intended claims/cite_keys)
+    - phase 4b writer paper-visible execution (compose LaTeX given
+      contract + paper context)
+    - phase 6a evaluator paper-blind setup (rubric pre-commitment,
+      blind to writer's draft)
+    - phase 6b evaluator paper-visible scoring + decision
+
+    Each phase is an isolated LLM call (``LLMClient.complete_isolated``)
+    routed via 4 distinct node tags (``compose_writer_plan`` /
+    ``compose_writer_exec`` / ``compose_evaluator_setup`` /
+    ``compose_evaluator_exec``) — users can route the writer + evaluator
+    to different backends via routing.overrides for cross-model
+    verification.
+
+    V1.0 default: ``strict=True`` (4-call enabled). Cost is 2-4× v1
+    single-call compose; latency ~2-3×. Pass ``strict=False`` to fall
+    back to v1 (degraded=true echoed).
+
+    ``write=False`` (default): audit-only run; the writer's Phase 4b
+    output is returned in ``writer_decision.composed_text`` but not
+    persisted. Set ``write=True`` after reviewing the
+    EvaluatorDecision to land the draft on disk.
+
+    Returns ``{contract, writer_commitment, writer_decision,
+    evaluator_rubric, evaluator_decision, divergences,
+    cross_model_used, written?}``.
+    """
+    return draft_compose_v2_tools.draft_compose_v2_tool(
+        project_dir,
+        section,
+        idea_id=idea_id,
+        experiment_id=experiment_id,
+        target_words=target_words,
+        instruction=instruction,
+        strict=strict,
+        cross_model_evaluator=cross_model_evaluator,
+        write=write,
     )
 
 
