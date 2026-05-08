@@ -320,6 +320,7 @@ HOST_SUPPORTED_NODES: frozenset[str] = frozenset(
         "review_persona_statistics",
         "review_persona_domain",
         "review_persona_reviewer2",
+        "review_persona_devils_advocate",
         "review_moderator",
         "review_verdict",
     }

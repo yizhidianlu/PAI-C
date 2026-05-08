@@ -56,13 +56,19 @@ class _StubReviewLLM:
 
         # Identify which prompt this is by a phrase in the system message
         marker = "?"
-        if "Methodology Reviewer" in system:
+        # Anchor persona detection on the "# Persona: <Name>" header that
+        # every persona prompt starts with — substring matches alone collide
+        # with the moderator prompt, which now mentions "Devil's Advocate"
+        # in its priority rule (ARS-fusion P1-3).
+        if "# Persona: Methodology Reviewer" in system:
             marker = "methodology"
-        elif "Statistics & Data Reviewer" in system:
+        elif "# Persona: Statistics & Data Reviewer" in system:
             marker = "statistics"
-        elif "Domain Expert Reviewer" in system:
+        elif "# Persona: Domain Expert Reviewer" in system:
             marker = "domain"
-        elif "Reviewer 2" in system:
+        elif "# Persona: Devil's Advocate" in system:
+            marker = "devils_advocate"
+        elif "Persona: Novelty / \"Reviewer 2\"" in system or "# Persona: Reviewer 2" in system:
             marker = "reviewer2"
         elif "moderator" in system.lower() or "chair / moderator" in system.lower():
             marker = "moderator"
@@ -184,8 +190,9 @@ def test_round1_persona_prompt_has_no_previous_round_context(project_with_experi
     stub = _StubReviewLLM()
     review_start(str(p), exp_id, rounds=2, llm=stub)
     # Round 1 calls only — review_start pauses before round 2.
-    persona_calls = [c for c in stub.calls if c["persona"] in {"methodology", "statistics", "domain", "reviewer2"}]
-    assert len(persona_calls) == 4
+    persona_set = {"methodology", "statistics", "domain", "reviewer2", "devils_advocate"}
+    persona_calls = [c for c in stub.calls if c["persona"] in persona_set]
+    assert len(persona_calls) == 5  # 5-panel review since ARS-fusion P1-3
     for call in persona_calls:
         assert "PREVIOUS ROUND" not in (call["user"] or ""), (
             f"Round 1 {call['persona']} prompt unexpectedly contains PREVIOUS ROUND segment"
@@ -202,12 +209,13 @@ def test_round2_persona_prompts_include_previous_round_context(project_with_expe
     review_step(str(p), run_id, rebuttal=rebuttal_text, llm=stub)
 
     # Slice out only round 2 calls — they come AFTER the round 1 set
-    # (4 personas + 1 moderator = 5 entries before round 2).
-    round2_calls = stub.calls[5:]
-    persona_calls_r2 = [c for c in round2_calls if c["persona"] in {"methodology", "statistics", "domain", "reviewer2"}]
+    # (5 personas + 1 moderator = 6 entries before round 2 since P1-3).
+    persona_set = {"methodology", "statistics", "domain", "reviewer2", "devils_advocate"}
+    round2_calls = stub.calls[6:]
+    persona_calls_r2 = [c for c in round2_calls if c["persona"] in persona_set]
     moderator_calls_r2 = [c for c in round2_calls if c["persona"] == "moderator"]
 
-    assert len(persona_calls_r2) == 4
+    assert len(persona_calls_r2) == 5
     assert len(moderator_calls_r2) == 1
 
     # Each round-2 persona prompt must include both segments.

@@ -7,7 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-PersonaName = Literal["methodology", "statistics", "domain", "reviewer2"]
+PersonaName = Literal[
+    "methodology",
+    "statistics",
+    "domain",
+    "reviewer2",
+    "devils_advocate",
+]
 Severity = Literal["blocker", "major", "minor", "nit"]
 VerdictDecision = Literal["accept", "minor_revision", "major_revision", "reject"]
 

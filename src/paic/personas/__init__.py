@@ -1,8 +1,19 @@
-"""4 reviewer persona prompts loaded as plain strings."""
+"""5 reviewer persona prompts loaded as plain strings.
+
+Persona ordering matters: the review graph dispatches them in this order,
+and the moderator treats ``devils_advocate`` critiques as highest priority
+when synthesizing the round (see ARS-fusion P1-3).
+"""
 
 from importlib import resources
 
-PERSONA_NAMES = ("methodology", "statistics", "domain", "reviewer2")
+PERSONA_NAMES = (
+    "methodology",
+    "statistics",
+    "domain",
+    "reviewer2",
+    "devils_advocate",
+)
 
 
 def load_persona(name: str) -> str:

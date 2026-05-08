@@ -1,14 +1,23 @@
 ---
 name: paic-review
-description: Run a multi-agent (4-persona) review on an experiment plan. Methodology / statistics / domain / Reviewer-2 each critique; a moderator agent synthesizes; the author can rebut between rounds. Use after /paic-experiment when the user wants to stress-test the plan.
+description: Run a multi-agent (5-persona) review on an experiment plan. Methodology / statistics / domain / Reviewer-2 / Devil's Advocate each critique; a moderator agent synthesizes; the author can rebut between rounds. Use after /paic-experiment when the user wants to stress-test the plan.
 allowed-tools: mcp__paic__paic_review_start, mcp__paic__paic_review_step, mcp__paic__paic_review_status, mcp__paic__paic_revision_extract, mcp__paic__paic_revision_list, mcp__paic__paic_revision_apply, mcp__paic__paic_revision_resolve
 ---
 
-# /paic-review — multi-agent experiment review
+# /paic-review — multi-agent experiment review (5-panel since ARS-fusion P1-3)
 
 ## Flow
 
-This is a **multi-step** skill. Each round, the graph runs all 4 personas + a moderator, then PAUSES at `await_user` for the author to respond. After ``rounds`` rounds (default 2), the graph emits a final verdict.
+This is a **multi-step** skill. Each round, the graph runs all 5 personas + a moderator, then PAUSES at `await_user` for the author to respond. After ``rounds`` rounds (default 2), the graph emits a final verdict.
+
+**5-panel composition (V1.0)**:
+- `methodology` — methodological rigor
+- `statistics` — statistics, data, reproducibility
+- `domain` — domain fit and literature positioning
+- `reviewer2` — novelty + nitpick from a "make the authors lose sleep" angle
+- `devils_advocate` — strongest counter-argument + logical-fallacy detection ⚠️
+
+The moderator treats `devils_advocate` critiques as **must-fix-tier** unless another persona explicitly rebuts them — see the moderator prompt for the priority rule.
 
 ### Step 1 — start
 1. Confirm the target `experiment_id` and the desired number of rounds (default 2) in 1 short Chinese sentence.
@@ -70,7 +79,7 @@ mcp__paic__paic_revision_extract(
 
 ## 错误情况
 - `error: experiment_not_found` → 提示运行 `/paic-experiment <idea_id>` 先生成。
-- `error: unknown_personas` → 用户传错了 persona name；显示有效集合 ["methodology","statistics","domain","reviewer2"]。
+- `error: unknown_personas` → 用户传错了 persona name；显示有效集合 ["methodology","statistics","domain","reviewer2","devils_advocate"]。
 - `error: experiment_schema_invalid` → 用户/Claude 手写 YAML 时字段类型错了。`detail` 字段里有 pydantic 的 errors 列表，逐项指向出错字段。**不要硬扛**——直接照下面 schema 段把 YAML 改对再重跑。
 
 ## 实验 YAML schema（手写时参照）
