@@ -150,6 +150,21 @@ class ProjectPaths:
         return self.state_dir / "runs.yaml"
 
     @property
+    def passport_yaml(self) -> Path:
+        """Material Passport ledger (ARS-fusion P1-2).
+
+        Append-only multi-doc YAML stream; entries are ``boundary`` or
+        ``resume``. Created lazily on first emit; absent until the user
+        opts in via ``~/.paic/config.yaml`` ``passport.enable_reset_boundary``.
+        """
+        return self.state_dir / "passport.yaml"
+
+    @property
+    def passport_lock(self) -> Path:
+        """Cross-platform advisory lock file for passport_yaml writes."""
+        return self.state_dir / ".passport.lock"
+
+    @property
     def logs_dir(self) -> Path:
         return self.paic_dir / "logs"
 

@@ -240,6 +240,25 @@ class ProviderSemanticScholarConfig:
 
 
 @dataclass(frozen=True)
+class PassportConfig:
+    """Material Passport — stage-boundary ledger (ARS-fusion P1-2).
+
+    Default off (``enable_reset_boundary=False``) — opt-in via
+    ``~/.paic/config.yaml`` ``passport.enable_reset_boundary: true``.
+    Once enabled, the pipeline orchestrator emits ``kind: boundary``
+    entries at FULL checkpoints; users can resume in a fresh Claude
+    Code session via ``resume_from_passport=<hash>``.
+
+    ``lock_timeout_sec`` caps the advisory lock acquisition wait. ARS
+    spec allows up to 60s; default 30s because a passport append is a
+    few-KB write — anything beyond suggests a stuck peer.
+    """
+
+    enable_reset_boundary: bool = False
+    lock_timeout_sec: float = 30.0
+
+
+@dataclass(frozen=True)
 class OverleafConfig:
     """Bidirectional Overleaf sync via Dropbox — opt-in.
 
@@ -395,6 +414,7 @@ class Config:
     # default factory so older test fixtures that construct Config(...) without
     # specifying overleaf continue to work.
     overleaf: OverleafConfig = field(default_factory=OverleafConfig)
+    passport: PassportConfig = field(default_factory=PassportConfig)
     raw: dict = field(default_factory=dict)
 
     @property
@@ -684,6 +704,28 @@ def _load_provider_s2(raw: dict[str, Any]) -> ProviderSemanticScholarConfig:
     )
 
 
+def _load_passport(raw: dict[str, Any]) -> PassportConfig:
+    """Read ``passport`` config block from ``~/.paic/config.yaml``.
+
+    Default off — users opt in by setting
+    ``passport.enable_reset_boundary: true``.
+    """
+    block = raw.get("passport") if isinstance(raw, dict) else None
+    if not isinstance(block, dict):
+        return PassportConfig()
+    enabled = bool(block.get("enable_reset_boundary", False))
+    timeout = block.get("lock_timeout_sec", 30.0)
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        timeout = 30.0
+    if timeout < 0.001:
+        timeout = 0.001
+    if timeout > 60.0:
+        timeout = 60.0  # ARS spec hard ceiling
+    return PassportConfig(enable_reset_boundary=enabled, lock_timeout_sec=timeout)
+
+
 def _load_overleaf(raw: dict[str, Any]) -> OverleafConfig:
     block = raw.get("overleaf") if isinstance(raw, dict) else None
     if not isinstance(block, dict):
@@ -750,6 +792,7 @@ def load_config(global_dir: Path | None = None) -> Config:
     providers_external_search = _load_provider_external_search(raw)
     providers_images = _load_provider_images(raw)
     overleaf = _load_overleaf(raw)
+    passport = _load_passport(raw)
     providers_named_extra = _load_named_providers(raw)
     routing = _load_routing(raw)
 
@@ -777,6 +820,7 @@ def load_config(global_dir: Path | None = None) -> Config:
         providers_external_search=providers_external_search,
         providers_images=providers_images,
         overleaf=overleaf,
+        passport=passport,
         routing=routing,
         providers_named_extra=providers_named_extra,
         raw=raw,

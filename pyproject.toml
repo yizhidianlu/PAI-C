@@ -26,6 +26,11 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
     "pypdf>=4.0",
+    # ARS-fusion P1-2: cross-platform advisory file lock for Material
+    # Passport ledger. POSIX fcntl + Windows msvcrt are wrapped behind a
+    # uniform API; a process that cannot acquire the lock within
+    # `timeout_sec` (default 30s) hard-fails per ARS iron rule §9.
+    "portalocker>=2.8",
 ]
 
 [project.scripts]

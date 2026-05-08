@@ -24,6 +24,7 @@ from paic.mcp_server.tools import integrity as integrity_tools
 from paic.mcp_server.tools import library as library_tools
 from paic.mcp_server.tools import library_retrieve as library_retrieve_tools
 from paic.mcp_server.tools import pacing as pacing_tools
+from paic.mcp_server.tools import passport as passport_tools
 from paic.mcp_server.tools import paper_plan as paper_plan_tools
 from paic.mcp_server.tools import quality_gate as quality_gate_tools
 from paic.mcp_server.tools import related_work as related_work_tools
@@ -1534,6 +1535,106 @@ def paic_draft_sync_overleaf(
         conflict_strategy=conflict_strategy,
         confirm_deletions=confirm_deletions,
     )
+
+
+# --- Material Passport (ARS-fusion P1-2) -----------------------------------
+
+@mcp.tool()
+def paic_passport_emit(
+    project_dir: str,
+    stage: int | str,
+    deliverables: list[str] | None = None,
+    next_stage: int | str | None = None,
+    pending_decision: dict[str, Any] | None = None,
+    session_marker: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Append a ``kind=boundary`` entry to the passport ledger (ARS-fusion P1-2).
+
+    Stage-level append-only ledger that survives across SKILL boundaries
+    and across Claude Code sessions. After emit, the user can paste
+    ``resume_from_passport=<hash>`` into a fresh session to pick up
+    where they left off without replaying turns.
+
+    **Opt-in**: requires ``passport.enable_reset_boundary: true`` in
+    ``~/.paic/config.yaml``. Returns ``error: passport_disabled`` when
+    not enabled.
+
+    ``pending_decision`` (optional): when this boundary requires a
+    multi-branch user decision (e.g. review verdict accept/revise/reject),
+    pass ``{question, options: [{value, next_stage, next_mode?, label?}]}``.
+    On resume, the orchestrator re-prompts the user with ``question``
+    and routes per the chosen option's ``next_stage`` / ``next_mode``
+    (boundary's own ``next_stage`` is advisory only when
+    ``pending_decision`` is set; ARS iron rule §8).
+
+    Returns ``{ok, ledger_path, entry, resume_command,
+    human_instruction}``. The 12-char hash is in ``entry.hash`` and
+    ``resume_command``.
+    """
+    return passport_tools.passport_emit_tool(
+        project_dir,
+        stage=stage,
+        deliverables=deliverables,
+        next_stage=next_stage,
+        pending_decision=pending_decision,
+        session_marker=session_marker,
+        notes=notes,
+    )
+
+
+@mcp.tool()
+def paic_passport_resume(
+    project_dir: str,
+    hash: str,
+    stage_override: int | str | None = None,
+    mode_override: str | None = None,
+    chosen_branch: str | None = None,
+    session_marker: str | None = None,
+) -> dict[str, Any]:
+    """Resolve ``resume_from_passport=<hash>`` end-to-end (ARS-fusion P1-2).
+
+    Routing precedence:
+
+    1. When the boundary carries ``pending_decision``, the user must
+       supply ``chosen_branch`` (one of ``options[*].value``); routing
+       comes from that option's ``next_stage`` / ``next_mode``.
+    2. Else routing comes from the boundary's own ``next_stage``.
+    3. CLI-style overrides (``stage_override`` / ``mode_override``)
+       replace the base values when supplied (apply AFTER branch routing).
+
+    Errors:
+    - ``passport_disabled`` — ``passport.enable_reset_boundary: false``
+    - ``passport_no_ledger`` — no boundaries have been emitted yet
+    - ``hash_not_found`` — supplied hash doesn't match any boundary
+    - ``double_resume`` — a prior resume already consumed this boundary
+    - ``pending_decision_required`` — user must supply ``chosen_branch``
+    - ``unknown_branch`` — ``chosen_branch`` not in option values
+    - ``passport_lock_timeout`` — advisory lock acquisition timed out
+
+    Appends a ``kind=resume`` entry on success (with ``consumes_hash``
+    pointing back) so future calls cannot double-resume.
+    """
+    return passport_tools.passport_resume_tool(
+        project_dir,
+        hash=hash,
+        stage_override=stage_override,
+        mode_override=mode_override,
+        chosen_branch=chosen_branch,
+        session_marker=session_marker,
+    )
+
+
+@mcp.tool()
+def paic_passport_list(project_dir: str) -> dict[str, Any]:
+    """Read-only snapshot of the passport ledger (ARS-fusion P1-2).
+
+    Returns ``{ledger_path, exists, enabled, entries, boundary_count,
+    resume_count, awaiting_resume}``. ``awaiting_resume`` is the list
+    of boundary entries that have not been consumed by any subsequent
+    resume — these are the ledger lines a fresh session can pick up.
+    """
+    return passport_tools.passport_list_tool(project_dir)
 
 
 # --- Run management --------------------------------------------------------
