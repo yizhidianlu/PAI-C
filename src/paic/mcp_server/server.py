@@ -510,6 +510,50 @@ def paic_revision_extract_persist(
 
 
 @mcp.tool()
+def paic_revision_parse_external(
+    project_dir: str,
+    raw_text: str,
+    format_hint: str | None = None,
+    paper_draft: str | None = None,
+    editor_decision: str | None = None,
+    round_num: int | None = None,
+) -> dict[str, Any]:
+    """Parse unstructured external reviewer comments into RevisionTasks (ARS-fusion P0-2).
+
+    Companion to ``paic_revision_extract`` for the case where reviewer
+    feedback came from outside the PAI-C ``/paic-review`` graph — an
+    email, a PDF copy/paste, an editor's letter, a forum post.
+
+    Pipeline (ARS revision_coach_agent semantics):
+
+    1. Split the text into per-reviewer / per-comment items
+    2. Classify each as Major / Minor / Editorial / Positive
+    3. Map each to a paper section (when ``paper_draft`` is provided)
+    4. Prioritize (editor-mentioned items promoted to major)
+    5. Emit a ``patch_hint`` per actionable item
+
+    Output matches ``_ExtractFields`` so the same
+    ``paic_revision_extract_persist`` companion finalizes the queue.
+
+    ``format_hint`` (optional): ``"email"`` / ``"bullet_list"`` /
+    ``"numbered"`` / ``"pdf_paste"`` / ``"mixed"``. Pass when the format
+    is obvious; otherwise omit and the parser auto-detects.
+
+    **Host orchestration mode** (``routing.overrides.revision_parse_external: host``):
+    returns a directive carrying the role spec + raw text. Skill calls
+    ``paic_revision_extract_persist`` with the parsed JSON.
+    """
+    return revisions_tools.revision_parse_external_tool(
+        project_dir,
+        raw_text,
+        format_hint=format_hint,
+        paper_draft=paper_draft,
+        editor_decision=editor_decision,
+        round_num=round_num,
+    )
+
+
+@mcp.tool()
 def paic_revision_list(
     project_dir: str,
     status: str | None = None,
