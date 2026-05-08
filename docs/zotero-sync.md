@@ -1,8 +1,10 @@
 # Zotero 同步
 
-> **Optional** · `/paic-ingest` 跑完后同步本批论文到 Zotero —— 依赖独立 [`zotero-mcp`](https://github.com/54yyyu/zotero-mcp)，免 API key（本地模式走 Zotero 桌面 app 端口 23119）。
+> **Optional** · `/paic-ingest` 跑完后同步本批论文到 Zotero —— 依赖独立 [`zotero-mcp`](https://github.com/54yyyu/zotero-mcp)。**本地 + Web API 混合模式**（hybrid mode）：读走桌面 app 23119 端口、写走 `api.zotero.org`，**必须配 Zotero API key**（免费申请）。
 
-PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 / PDF 附件 / collection 组织）同步到本地或云端 Zotero。机制是 SKILL 层调用独立的 zotero-mcp-server（**不在** PAI-C repo 内），不需要任何额外的 PAI-C 配置——只要 zotero-mcp 注册到 Claude Code，PAI-C 的 `/paic-ingest` 就会自动检测到并询问用户是否同步。
+PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 / PDF 附件 / collection 组织）同步到本地或云端 Zotero。机制是 SKILL 层调用独立的 zotero-mcp-server（**不在** PAI-C repo 内），不需要任何额外的 PAI-C 配置——只要 zotero-mcp 注册到 Claude Code 且配齐 hybrid mode env，PAI-C 的 `/paic-ingest` 就会自动检测到并询问用户是否同步。
+
+> **⚠️ 重要：仅 `ZOTERO_LOCAL=true` 不够**。zotero-mcp 在 local-only 模式下**只支持读**（list collections / search items 等），任何**写操作**（create_item / add_by_doi / add_by_url / add_from_file）都会被拒、返回 `Cannot perform write operations in local-only mode`。PAI-C ingest 同步路径的 priority 1/2/3 全是写操作，因此必须按 [Step 3](#step-3申请-zotero-api-key--找-user-id) 申请 API key、按 [Step 4](#step-4注册到-claude-code) 配 hybrid mode env，否则 SKILL 同步永远失败。
 
 > **PAI-C 不替换 zotero-mcp**——zotero-mcp 是独立的、可被 ChatGPT / Cherry Studio / Cursor 等其他客户端共用的 MCP server；PAI-C 只是消费它的几个 tool（`zotero_get_collections` / `zotero_create_collection` / `zotero_add_by_doi` / `zotero_add_by_url` / `zotero_add_from_file`）。
 
@@ -16,6 +18,7 @@ PAI-C 在 `/paic-ingest` 跑完后**可选**把这批论文（含 DOI 元数据 
 
 ## 前置依赖
 
+- **Zotero 账号**（[zotero.org](https://www.zotero.org/) 免费注册）—— Web API 写权限的源头
 - **Zotero 桌面 app**（macOS / Windows / Linux 都行，**最低 Zotero 7**——本地 API 需要 Zotero 7+）
 - **Python 3.10+**（zotero-mcp-server 要求）
 - **zotero-mcp-server ≥ 0.1.5**（PAI-C 的本地 PDF 兜底路径需要 `zotero_add_from_file`，0.1.5 引入；当前推荐 0.3.0+）
@@ -56,18 +59,38 @@ zotero-mcp setup-info     # 看安装路径 + 当前 env，便于排错
 
 > 想要语义检索 / PDF 抽取 / Scite 引用智能等扩展能力，参考 zotero-mcp 自身 README 的 `[semantic]` / `[pdf]` / `[scite]` extras。PAI-C 的 ingest 同步不依赖任何 extra。`zotero-mcp setup` 子命令只用于 Claude Desktop + ChromaDB 语义索引，**Claude Code 用户无需跑**。
 
-## Step 3：注册到 Claude Code
+## Step 3：申请 Zotero API key + 找 user ID
+
+> **为什么是 mandatory**：zotero-mcp 在仅 `ZOTERO_LOCAL=true` 下**只支持读**，PAI-C ingest 同步流程的写入路径（priority 1/2/3）全部依赖 Zotero Web API，必须配 `ZOTERO_API_KEY` + `ZOTERO_LIBRARY_ID`。
+
+1. 登录 [zotero.org/settings/keys](https://www.zotero.org/settings/keys)（用你的 Zotero 账号）。
+2. 点 **Create new private key**：
+   - **Key Description**：任意（如 `paic`），方便后续在密钥列表识别 / 撤销
+   - **Personal Library** 区勾上 `Allow library access` + `Allow write access`（写权限是关键）
+   - 如果你想同步到 group library，把对应的 group 也加 `Read/Write`
+   - 提交后页面**只显示一次**完整 key（形如 `DXmn3iZsTkQyYk9HHqTIdJdn`），立刻复制好
+3. 在 [zotero.org/settings/keys](https://www.zotero.org/settings/keys) 顶部找到 **Your userID for use in API calls**（一串 7-8 位纯数字，如 `20490436`）。group library 用 `https://www.zotero.org/groups/<group-id>` 那串数字。
+
+收好这两样，进 Step 4。
+
+## Step 4：注册到 Claude Code
 
 > **预检 30 秒**：`Test-NetConnection -ComputerName localhost -Port 23119`（PowerShell）或 `nc -z localhost 23119 && echo OK`（bash）。`TcpTestSucceeded : True` / `OK` → Zotero 桌面 app 在跑、本地 API 通；否则去 Step 1 启动 Zotero。后面 Step 5 验证失败大半是这一关没过。
 
-PAI-C 跑在 Claude Code（CLI）下，注册位置是 `~/.claude.json` 的 `mcpServers` 段。两种方式：
+PAI-C 跑在 Claude Code（CLI）下，注册位置是 `~/.claude.json` 的 `mcpServers` 段。两种方式都需要把 Step 3 拿到的两个值塞进 env：
 
 ### 方式 A：用 `claude mcp add`（推荐）
 
 ```powershell
 # Windows / macOS / Linux 通用
-claude mcp add zotero zotero-mcp -e ZOTERO_LOCAL=true
+claude mcp add zotero zotero-mcp `
+  -e ZOTERO_LOCAL=true `
+  -e ZOTERO_API_KEY=DXmn3iZsTkQyYk9HHqTIdJdn `
+  -e ZOTERO_LIBRARY_ID=20490436 `
+  -e ZOTERO_LIBRARY_TYPE=user
 ```
+
+> 把上面的 key 与 ID 换成你自己 Step 3 拿到的；`ZOTERO_LIBRARY_TYPE` 取值 `user`（个人库）或 `group`（共享库）。
 
 这条命令会自动在 `~/.claude.json` 加上：
 
@@ -76,7 +99,12 @@ claude mcp add zotero zotero-mcp -e ZOTERO_LOCAL=true
   "mcpServers": {
     "zotero": {
       "command": "zotero-mcp",
-      "env": { "ZOTERO_LOCAL": "true" }
+      "env": {
+        "ZOTERO_LOCAL": "true",
+        "ZOTERO_API_KEY": "DXmn3iZsTkQyYk9HHqTIdJdn",
+        "ZOTERO_LIBRARY_ID": "20490436",
+        "ZOTERO_LIBRARY_TYPE": "user"
+      }
     }
   }
 }
@@ -84,45 +112,33 @@ claude mcp add zotero zotero-mcp -e ZOTERO_LOCAL=true
 
 ### 方式 B：手动编辑 `~/.claude.json`
 
-打开 `~/.claude.json`（Windows: `%USERPROFILE%\.claude.json`；macOS / Linux: `~/.claude.json`），找到 `mcpServers` 段（不存在就新建），加：
-
-```json
-"zotero": {
-  "command": "zotero-mcp",
-  "env": { "ZOTERO_LOCAL": "true" }
-}
-```
-
-**完全退出 Claude Code 再重启**（关全部 Claude Code 窗口 / 终端再打开）——MCP server 注册不热加载。
-
-## Step 4：选认证模式
-
-| 模式 | 适用 | 配置 |
-|---|---|---|
-| **本地 API**（推荐） | 单机用户、个人 personal library | `ZOTERO_LOCAL=true`（Step 3 已设） |
-| **Web API** | 多设备同步、Group library、不开 Zotero 桌面 app | `ZOTERO_API_KEY` + `ZOTERO_LIBRARY_ID` |
-
-### Web API 模式（仅当本地模式不适用时）
-
-1. 去 [zotero.org/settings/keys](https://www.zotero.org/settings/keys) 申请一个 API key（免费），勾选 read+write 权限。
-2. 在同一页面找到你的 `User ID`（个人库用这个）或 `Group ID`（group library 用这个）。
-3. 改 `~/.claude.json` 的 zotero 段：
+打开 `~/.claude.json`（Windows: `%USERPROFILE%\.claude.json`；macOS / Linux: `~/.claude.json`），找到 `mcpServers` 段（不存在就新建），加（**4 个 env 字段全填**）：
 
 ```json
 "zotero": {
   "command": "zotero-mcp",
   "env": {
-    "ZOTERO_LOCAL": "false",
-    "ZOTERO_API_KEY": "your-api-key-here",
-    "ZOTERO_LIBRARY_ID": "1234567",
+    "ZOTERO_LOCAL": "true",
+    "ZOTERO_API_KEY": "DXmn3iZsTkQyYk9HHqTIdJdn",
+    "ZOTERO_LIBRARY_ID": "20490436",
     "ZOTERO_LIBRARY_TYPE": "user"
   }
 }
 ```
 
-`ZOTERO_LIBRARY_TYPE` 取值：`user`（个人库，默认）/ `group`（group library）。
+**完全退出 Claude Code 再重启**（关全部 Claude Code 窗口 / 终端再打开）——MCP server 注册不热加载。
 
-完全重启 Claude Code。
+> **为什么 ZOTERO_LOCAL 仍要 `true`**：保留本地读路径——`zotero_get_collections` / `zotero_search_items` / `zotero_get_item_metadata` 等读操作直接打 `localhost:23119`，更快、不消耗 Zotero web API 配额、可离线。写操作（create / add_by_doi 等）则走 web API 用 API key 鉴权。这就是「hybrid mode」的核心。
+
+> **可选：把 key 也设到系统环境变量**（便于 zotero-mcp CLI 直接调用、其他 MCP 客户端共用）：
+>
+> ```powershell
+> [Environment]::SetEnvironmentVariable("ZOTERO_API_KEY", "DXmn3iZsTkQyYk9HHqTIdJdn", "User")
+> [Environment]::SetEnvironmentVariable("ZOTERO_LIBRARY_ID", "20490436", "User")
+> [Environment]::SetEnvironmentVariable("ZOTERO_LIBRARY_TYPE", "user", "User")
+> ```
+>
+> bash / zsh 用 `export ZOTERO_API_KEY=...` 加进 `~/.bashrc` / `~/.zshrc`。注意：MCP server 仍然依赖 `~/.claude.json` env 块（Claude Code spawn 时通过它传递），系统级 env 是补充而非替代。
 
 ## Step 5：验证 PAI-C 集成
 
@@ -191,10 +207,12 @@ PAI-C → Zotero 是**单向**，不维护反向同步。这意味着：
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
+| **写操作报 `Cannot perform write operations in local-only mode. Add ZOTERO_API_KEY and ZOTERO_LIBRARY_ID to enable hybrid mode.`** | env 只有 `ZOTERO_LOCAL=true`，缺 API key——读通但写拒。**最常见的同步失败根因**——`zotero_get_collections` 能跑、SKILL 询问也出来了，但选 y 之后 `zotero_create_collection` / `add_by_doi` 全失败 | 按 [Step 3](#step-3申请-zotero-api-key--找-user-id) 申请 API key + user ID；按 [Step 4](#step-4注册到-claude-code) 把 4 个 env 全配齐到 `~/.claude.json`；完全重启 Claude Code |
 | `zotero-mcp --version` 报 `unrecognized arguments` | zotero-mcp 用子命令风格，不是 flag | 改成 `zotero-mcp version`；同理 `setup-info` / `setup` / `serve` 等 |
 | `/paic-ingest` 跑完没问 Zotero | zotero-mcp 没注册 / 注册了但 Claude Code 没重启 | 跑 `claude mcp list` 看 zotero 是否在；重启 Claude Code |
 | zotero 调用报 `connection refused` | Zotero 桌面 app 没开 / 本地 API 被禁 | 启动 Zotero；`Test-NetConnection localhost 23119` 验证；查 `extensions.zotero.httpServer.enabled` |
-| `ZOTERO_LIBRARY_ID not set` | 选了 Web API 但 env 缺一个字段 | 检查 `~/.claude.json` zotero 段四个 env 都有；重启 |
+| `403 Forbidden` / `Invalid key` / `Insufficient permissions` | API key 错 / 没勾 write 权限 / library_id 与 key 不匹配 | 去 [zotero.org/settings/keys](https://www.zotero.org/settings/keys) 检查 key 是否被撤销、是否勾了 `Allow write access`；group library 时 key 需要对该 group 单独授权 |
+| `ZOTERO_LIBRARY_ID not set` | env 缺一个字段 | 检查 `~/.claude.json` zotero 段 4 个 env（`ZOTERO_LOCAL` / `ZOTERO_API_KEY` / `ZOTERO_LIBRARY_ID` / `ZOTERO_LIBRARY_TYPE`）都有；重启 Claude Code |
 | collection 一直建不上 | 同名 collection race / 权限 | 改名重试；group library 检查 API key 有 read+write 权限 |
 | 同一篇被建了副本 | 走了优先级 3（`zotero_add_from_file`）但 zotero-mcp 没从 PDF 头页抽到 DOI，又跟已有的 DOI item 撞上了 | 在 Zotero 里用 `zotero_find_duplicates` / 桌面端 Trash & Duplicate Items 视图 merge；或先给 `selected.yaml` 该篇补上 DOI，重 ingest 走优先级 1 自动去重 |
 | SKILL 报 `zotero_skipped: no_doi_no_arxiv_no_pdf` | 论文 metadata 里 doi / arxiv_id 都为空，本地也没下到 PDF | 给 `selected.yaml` 该篇补 DOI 或 arxiv_id 后重 ingest；或先在 Zotero 端手动加 |
