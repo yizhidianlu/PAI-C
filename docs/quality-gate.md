@@ -1,8 +1,8 @@
 # Paper-quality gate
 
-> **Feature** · `/paic-finalize` 提交前 8 类 paper-level 一致性检查 —— `overrides=` 语义、决策树、修复路径。
+> **Feature** · `/paic-finalize` 提交前 9 类 paper-level 一致性检查 —— `overrides=` 语义、决策树、修复路径。
 
-`/paic-finalize` 是提交前的最后一道**论文级**检查。它跑 8 类 paper-level 校验，把 LaTeX 语法之外的全局一致性问题暴露出来。
+`/paic-finalize` 是提交前的最后一道**论文级**检查。它跑 9 类 paper-level 校验，把 LaTeX 语法之外的全局一致性问题暴露出来。
 
 PAI-C 在 `/paic-draft` 写盘时已经把 LaTeX **语法**层的硬错（`\cite{}` 不在白名单、`\begin/\end` 不配对、大括号不平衡）拦在外面；`/paic-finalize` 检查的是**论文级一致性**（contribution 数对不对、numeric 有没有出处、强声明有没有支持）。两者互补，发版前都要过。
 
@@ -26,7 +26,7 @@ actionable_fix: "..."
 
 ---
 
-## 8 类检查
+## 9 类检查
 
 ### 1. `undefined_cites_refs`
 
@@ -85,7 +85,22 @@ actionable_fix: "..."
 - 内部数字：attach experiment_id（claim 的 supporting_experiments 加该实验 id）
 - 外部数字（引用别的 paper）：attach cite_key 到 required_citations
 
-### 8. `latex_compile_warnings`（opt-in，预留）
+### 8. `figure_coverage`
+
+3 个子检查，把 `<project>/.paic/figures/_plan.yaml` 与 `paper_plan.yaml` / `claims.yaml` / 已生成的 `figures/<slot>/meta.yaml` 拉通。`_plan.yaml` 不存在（项目没用 `/paic-figure`）时整段跳过。
+
+- **`figure_contribution_uncovered`** （severity=major）：`paper_plan.contributions` 中某条**没有**任何 figure / table / algorithm slot 的 `supporting_claims` 引到它（或它的任一 claim id），且没有 `no_visual_reason` 显式标"无图"。复用 [`paic_figure_plan` 自身的 `verify_claim_coverage`](paper-plan.md) 规则——这里只是把它从一次性插桩拉成持续校验。
+- **`figure_dangling_claim`** （severity=major）：figure slot 的 `supporting_claims` 列表里出现一个 id 既不在 `claims.yaml` 也不在 `paper_plan.contributions` —— 多半是 plan 改了 id 但 figure 没跟。
+- **`figure_brief_drift`** （severity=minor）：某 slot 已经生成过图（`figures/<slot>/meta.yaml` 有版本），其 `brief.supporting_claims` 快照与当前 `_plan.yaml` 的 `supporting_claims` **不一致**——意味着图片产出时绑的 claim 跟现在的 plan 不同了，视觉锚不再对应。
+
+**修法**：
+- contribution 未覆盖：要么补一个 figure / table / algorithm slot 把它绑上；要么在 `_plan.yaml` 加一个 slot 写明 `no_visual_reason`（如「方程式贡献无图」/「负面结果」）。
+- dangling claim：要么从 slot 的 `supporting_claims` 移掉那个 id；要么去 `claims.yaml` / `paper_plan.yaml` 把对应 claim / contribution 补上。
+- brief drift：重跑 `paic_figure_generate <slot>` 让 brief 快照与新 plan 对齐；或者撤销 plan 里的 supporting_claims 修改（如果是误改）。
+
+**Overrides**：`overrides=["figure_brief_drift"]` 常用——drift 是 minor，赶 deadline 时可以先记账后修。`figure_contribution_uncovered` 与 `figure_dangling_claim` 是 major，少用 override（它们指向真问题）。
+
+### 9. `latex_compile_warnings`（opt-in，预留）
 
 **触发**：当 `--compile-check` 启用时本应解析 LaTeX 编译日志。**当前 stub**——永远返回 `[]`，后续版本实装。
 

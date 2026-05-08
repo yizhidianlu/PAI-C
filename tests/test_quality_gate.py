@@ -9,6 +9,7 @@ import pytest
 from paic.latex.quality_gate import (
     check_contribution_consistency,
     check_duplicate_paragraphs,
+    check_figure_coverage,
     check_numeric_provenance,
     check_section_length_balance,
     check_undefined_cites_refs,
@@ -493,3 +494,225 @@ def test_tool_returns_serializable_payload(project):
 def test_tool_uninitialized_project_errors(tmp_path):
     res = quality_gate_run_tool(str(tmp_path / "nope"))
     assert res["error"] == "project_not_initialized"
+
+
+# ----------------------------------------------------- check_figure_coverage
+
+
+def _write_figure_plan(project_dir, slots: list[dict]):
+    """Write a minimal _plan.yaml with the supplied slot dicts."""
+    paths = resolve_project(str(project_dir))
+    paths.figures_dir.mkdir(parents=True, exist_ok=True)
+    save_yaml(
+        paths.figures_dir / "_plan.yaml",
+        {
+            "plan_id": "test_plan",
+            "draft_path": None,
+            "created_at": datetime.now(UTC).isoformat(),
+            "slots": slots,
+            "coverage_warnings": [],
+        },
+    )
+
+
+def _write_figure_meta(project_dir, slot: str, brief: dict):
+    """Write a minimal meta.yaml for a generated figure with one version entry."""
+    paths = resolve_project(str(project_dir))
+    sdir = paths.figures_dir / slot
+    sdir.mkdir(parents=True, exist_ok=True)
+    save_yaml(
+        sdir / "meta.yaml",
+        {
+            "slot": slot,
+            "versions": [
+                {
+                    "version": "v1",
+                    "kind": "generate",
+                    "model": "gpt-image-2",
+                    "prompt": "stub prompt",
+                    "parent_version": None,
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "brief": brief,
+                }
+            ],
+        },
+    )
+
+
+def test_figure_coverage_no_plan_returns_empty(project):
+    paths = resolve_project(str(project))
+    assert check_figure_coverage(paths) == []
+
+
+def test_figure_coverage_uncovered_contribution_flagged(project):
+    """Contribution with no figure slot binding produces a major issue."""
+    _write_paper_plan(project, [{"id": "C1", "title": "Speed", "description": "Fast."}])
+    _write_figure_plan(project, [
+        {
+            "slot": "teaser",
+            "kind": "teaser",
+            "section_hint": "01_intro",
+            "scene_description": "...",
+            "supporting_claims": [],  # no binding
+            "primary_claim_id": None,
+        },
+    ])
+    paths = resolve_project(str(project))
+    issues = check_figure_coverage(paths)
+    uncovered = [i for i in issues if i.kind == "figure_contribution_uncovered"]
+    assert len(uncovered) == 1
+    assert uncovered[0].severity == "major"
+    assert uncovered[0].target == "C1"
+
+
+def test_figure_coverage_contribution_covered_no_issue(project):
+    _write_paper_plan(project, [{"id": "C1", "title": "Speed", "description": "Fast."}])
+    _write_figure_plan(project, [
+        {
+            "slot": "teaser",
+            "kind": "teaser",
+            "section_hint": "01_intro",
+            "scene_description": "...",
+            "supporting_claims": ["C1"],
+            "primary_claim_id": "C1",
+        },
+    ])
+    paths = resolve_project(str(project))
+    issues = check_figure_coverage(paths)
+    assert not any(i.kind == "figure_contribution_uncovered" for i in issues)
+
+
+def test_figure_coverage_no_visual_reason_counts_as_covered(project):
+    _write_paper_plan(project, [{"id": "C1", "title": "Theorem", "description": "..."}])
+    _write_figure_plan(project, [
+        {
+            "slot": "_skipped",
+            "kind": "concept",
+            "section_hint": "03_method",
+            "scene_description": "(none)",
+            "supporting_claims": ["C1"],
+            "no_visual_reason": "equation-only contribution",
+        },
+    ])
+    paths = resolve_project(str(project))
+    issues = check_figure_coverage(paths)
+    assert not any(i.kind == "figure_contribution_uncovered" for i in issues)
+
+
+def test_figure_coverage_dangling_claim_id_flagged(project):
+    """supporting_claims pointing at undefined ids → figure_dangling_claim major."""
+    _write_paper_plan(project, [{"id": "C1", "title": "X", "description": "..."}])
+    _write_claims(project, [
+        {"id": "CL1", "type": "factual", "status": "supported",
+         "text": "x", "contribution_id": "C1",
+         "created_at": datetime.now(UTC).isoformat(),
+         "updated_at": datetime.now(UTC).isoformat()},
+    ])
+    _write_figure_plan(project, [
+        {
+            "slot": "teaser",
+            "kind": "teaser",
+            "section_hint": "01_intro",
+            "scene_description": "...",
+            "supporting_claims": ["CL1", "CL_GHOST"],  # CL_GHOST not in claims.yaml
+            "primary_claim_id": "CL1",
+        },
+    ])
+    paths = resolve_project(str(project))
+    issues = check_figure_coverage(paths)
+    dangling = [i for i in issues if i.kind == "figure_dangling_claim"]
+    assert len(dangling) == 1
+    assert dangling[0].severity == "major"
+    assert "CL_GHOST" in dangling[0].target
+
+
+def test_figure_coverage_brief_drift_flagged_as_minor(project):
+    """meta.yaml brief snapshot != current plan supporting_claims → drift minor."""
+    _write_paper_plan(project, [{"id": "C1", "title": "X", "description": "..."}])
+    _write_claims(project, [
+        {"id": "CL1", "type": "factual", "status": "supported",
+         "text": "x", "contribution_id": "C1",
+         "created_at": datetime.now(UTC).isoformat(),
+         "updated_at": datetime.now(UTC).isoformat()},
+        {"id": "CL2", "type": "factual", "status": "supported",
+         "text": "y", "contribution_id": "C1",
+         "created_at": datetime.now(UTC).isoformat(),
+         "updated_at": datetime.now(UTC).isoformat()},
+    ])
+    _write_figure_plan(project, [
+        {
+            "slot": "teaser",
+            "kind": "teaser",
+            "section_hint": "01_intro",
+            "scene_description": "...",
+            "supporting_claims": ["CL1", "CL2"],  # current plan
+            "primary_claim_id": "CL1",
+        },
+    ])
+    # generated against just CL1 — plan was edited after the fact
+    _write_figure_meta(project, "teaser", brief={
+        "scene_description": "...",
+        "supporting_claims": ["CL1"],
+        "primary_claim_id": "CL1",
+    })
+    paths = resolve_project(str(project))
+    issues = check_figure_coverage(paths)
+    drift = [i for i in issues if i.kind == "figure_brief_drift"]
+    assert len(drift) == 1
+    assert drift[0].severity == "minor"
+    assert drift[0].target == "teaser"
+
+
+def test_figure_coverage_brief_match_no_drift(project):
+    _write_paper_plan(project, [{"id": "C1", "title": "X", "description": "..."}])
+    _write_claims(project, [
+        {"id": "CL1", "type": "factual", "status": "supported",
+         "text": "x", "contribution_id": "C1",
+         "created_at": datetime.now(UTC).isoformat(),
+         "updated_at": datetime.now(UTC).isoformat()},
+    ])
+    _write_figure_plan(project, [
+        {
+            "slot": "teaser",
+            "kind": "teaser",
+            "section_hint": "01_intro",
+            "scene_description": "...",
+            "supporting_claims": ["CL1"],
+            "primary_claim_id": "CL1",
+        },
+    ])
+    _write_figure_meta(project, "teaser", brief={
+        "scene_description": "...",
+        "supporting_claims": ["CL1"],
+        "primary_claim_id": "CL1",
+    })
+    paths = resolve_project(str(project))
+    issues = check_figure_coverage(paths)
+    assert not any(i.kind == "figure_brief_drift" for i in issues)
+
+
+def test_figure_coverage_overrides_drop_minor_drift(project):
+    """run_quality_gate honors overrides=['figure_brief_drift'] for the minor drift kind."""
+    _write_paper_plan(project, [{"id": "C1", "title": "X", "description": "..."}])
+    _write_claims(project, [
+        {"id": "CL1", "type": "factual", "status": "supported",
+         "text": "x", "contribution_id": "C1",
+         "created_at": datetime.now(UTC).isoformat(),
+         "updated_at": datetime.now(UTC).isoformat()},
+    ])
+    _write_figure_plan(project, [
+        {"slot": "teaser", "kind": "teaser", "section_hint": "01_intro",
+         "scene_description": "...", "supporting_claims": ["CL1"],
+         "primary_claim_id": "CL1"},
+    ])
+    _write_figure_meta(project, "teaser", brief={
+        "scene_description": "...",
+        "supporting_claims": [],  # drift on purpose
+        "primary_claim_id": None,
+    })
+    # Need to satisfy ANTHROPIC_API_KEY check or run_quality_gate may error
+    # — but it doesn't, run_quality_gate only reads project state. Good.
+    paths = resolve_project(str(project))
+    res = run_quality_gate(paths, overrides=["figure_brief_drift"])
+    # drift suppressed — but contribution still uncovered (major) so passed=False
+    assert not any(i.kind == "figure_brief_drift" for i in res.issues)

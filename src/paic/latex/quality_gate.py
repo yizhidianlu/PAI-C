@@ -538,6 +538,181 @@ def check_numeric_provenance(
     return issues
 
 
+def check_figure_coverage(paths: ProjectPaths) -> list[GateIssue]:
+    """Three sub-checks tying figures to the claim ledger:
+
+    1. ``figure_contribution_uncovered`` — every paper_plan contribution has
+       at least one figure / table / algorithm slot whose
+       ``supporting_claims`` references it (or one of its claim ids), or an
+       explicit ``no_visual_reason``. Reuses ``verify_claim_coverage`` from
+       the planner so the rule stays consistent with paic_figure_plan.
+    2. ``figure_dangling_claim`` — every ``supporting_claims`` id on a
+       figure slot exists in claims.yaml. A typo here means the figure
+       *appears* claim-bound but actually points at nothing, defeating the
+       coverage check.
+    3. ``figure_brief_drift`` — when a slot has been generated (the slot
+       directory under ``.paic/figures/`` has a meta.yaml with version
+       entries), the most recent version's ``brief.supporting_claims``
+       must equal the slot's current ``supporting_claims`` in _plan.yaml.
+       Drift here means the plan was edited after generation; the figure
+       is now visually grounded against stale claims.
+
+    Returns ``[]`` when ``_plan.yaml`` is absent (figure pipeline not used)
+    or the project has no contributions to bind against.
+    """
+    issues: list[GateIssue] = []
+    plan_path = paths.figures_dir / "_plan.yaml"
+    if not plan_path.is_file():
+        return issues
+
+    raw_plan = load_yaml(plan_path, default={}) or {}
+    if not isinstance(raw_plan, dict):
+        return issues
+    raw_slots = raw_plan.get("slots") or []
+    if not raw_slots:
+        return issues
+
+    # Reconstruct FigureSlot list for verify_claim_coverage. Lazy import
+    # because quality_gate runs in environments where images deps may be
+    # bare-bones (no PIL etc.) — but planner.py only depends on stdlib +
+    # paic.workspace.
+    from paic.images.planner import FigureSlot, verify_claim_coverage
+
+    slots: list[FigureSlot] = []
+    for entry in raw_slots:
+        if not isinstance(entry, dict):
+            continue
+        slots.append(
+            FigureSlot(
+                slot=entry.get("slot", ""),
+                kind=entry.get("kind", "concept"),
+                section_hint=entry.get("section_hint", ""),
+                position_hint=entry.get("position_hint", ""),
+                scene_description=entry.get("scene_description", ""),
+                caption_hint=entry.get("caption_hint", ""),
+                rationale=entry.get("rationale", ""),
+                supporting_claims=tuple(entry.get("supporting_claims") or ()),
+                primary_claim_id=entry.get("primary_claim_id"),
+                no_visual_reason=entry.get("no_visual_reason"),
+            )
+        )
+
+    # (1) Contribution coverage — delegate to the planner's helper, then
+    # promote each warning string into a GateIssue.
+    for warning in verify_claim_coverage(paths, slots):
+        # warning text starts with "contribution_uncovered: " — strip it
+        # so the detail field reads cleanly without redundant prefix.
+        detail = warning.split(":", 1)[1].strip() if ":" in warning else warning
+        # Try to extract the contribution id from the warning for target.
+        m = re.search(r"contribution '([^']+)'", warning)
+        target = m.group(1) if m else None
+        issues.append(
+            GateIssue(
+                kind="figure_contribution_uncovered",
+                severity="major",
+                target=target,
+                detail=detail,
+                actionable_fix=(
+                    "Either (a) add a figure / table / algorithm slot to "
+                    "paic_figure_plan with supporting_claims=[<contribution_id "
+                    "or its claim ids>], or (b) add a slot with "
+                    "no_visual_reason set explaining why this contribution "
+                    "intentionally has no visual artifact."
+                ),
+            )
+        )
+
+    # (2) Dangling claim ids — every supporting_claims entry must resolve
+    # against claims.yaml or the contribution registry. Skip when neither
+    # source exists (then we can't verify anything).
+    known_ids: set[str] = set()
+    if paths.claims_yaml.is_file():
+        claims_raw = load_yaml(paths.claims_yaml, default={}) or {}
+        if isinstance(claims_raw, dict):
+            for c in (claims_raw.get("claims") or []):
+                if isinstance(c, dict) and c.get("id"):
+                    known_ids.add(c["id"])
+    if paths.paper_plan_yaml.is_file():
+        pp_raw = load_yaml(paths.paper_plan_yaml, default={}) or {}
+        if isinstance(pp_raw, dict):
+            for c in (pp_raw.get("contributions") or []):
+                if isinstance(c, dict) and c.get("id"):
+                    known_ids.add(c["id"])
+
+    if known_ids:
+        for slot in slots:
+            for cid in slot.supporting_claims:
+                if cid not in known_ids:
+                    issues.append(
+                        GateIssue(
+                            kind="figure_dangling_claim",
+                            severity="major",
+                            target=f"{slot.slot}:{cid}",
+                            detail=(
+                                f"Figure slot '{slot.slot}' references "
+                                f"supporting_claims id '{cid}' which is not "
+                                "defined in claims.yaml or "
+                                "paper_plan.contributions."
+                            ),
+                            actionable_fix=(
+                                f"Either remove '{cid}' from the slot's "
+                                "supporting_claims, or add the corresponding "
+                                "Claim entry to claims.yaml / contribution to "
+                                "paper_plan.yaml."
+                            ),
+                        )
+                    )
+
+    # (3) Brief drift — generated figures whose persisted brief points at
+    # a different supporting_claims set than the current plan slot.
+    for slot in slots:
+        meta_path = paths.figures_dir / slot.slot / "meta.yaml"
+        if not meta_path.is_file():
+            continue
+        meta = load_yaml(meta_path, default={}) or {}
+        if not isinstance(meta, dict):
+            continue
+        versions = meta.get("versions") or []
+        if not versions:
+            continue
+        # Only inspect the latest generate-kind version — edit / variant
+        # versions inherit grounding from the parent.
+        latest_brief: dict | None = None
+        for entry in reversed(versions):
+            if not isinstance(entry, dict):
+                continue
+            brief = entry.get("brief")
+            if isinstance(brief, dict):
+                latest_brief = brief
+                break
+        if latest_brief is None:
+            continue
+        snapshot_claims = sorted(latest_brief.get("supporting_claims") or [])
+        current_claims = sorted(slot.supporting_claims)
+        if snapshot_claims != current_claims:
+            issues.append(
+                GateIssue(
+                    kind="figure_brief_drift",
+                    severity="minor",
+                    target=slot.slot,
+                    detail=(
+                        f"Figure '{slot.slot}' was generated against "
+                        f"supporting_claims={snapshot_claims} but the current "
+                        f"plan has supporting_claims={current_claims}. The "
+                        "image may no longer reinforce the right claims."
+                    ),
+                    actionable_fix=(
+                        f"Run paic_figure_generate again for slot "
+                        f"'{slot.slot}' so the new brief snapshot matches "
+                        "the current plan; or revert the plan edit if it "
+                        "was unintended."
+                    ),
+                )
+            )
+
+    return issues
+
+
 def check_latex_compile_warnings(paths: ProjectPaths, *, enabled: bool = False) -> list[GateIssue]:
     """Stub: phase-10 deliberately doesn't run an external compiler.
 
@@ -589,6 +764,7 @@ def run_quality_gate(
     raw_issues.extend(check_section_length_balance(sections, paper_plan))
     raw_issues.extend(check_unsupported_claims(paths))
     raw_issues.extend(check_numeric_provenance(paths, experiment_ids))
+    raw_issues.extend(check_figure_coverage(paths))
     raw_issues.extend(check_latex_compile_warnings(paths, enabled=compile_check))
 
     # Apply override filter:
