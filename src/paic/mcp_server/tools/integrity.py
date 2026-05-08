@@ -154,6 +154,8 @@ def integrity_check_tool(
     from_scratch: bool = False,
     mandatory_modes: list[int] | None = None,
     s2_enabled: bool = True,
+    originality_enabled: bool = False,
+    originality_sample_rate: float | None = None,
     llm: LLMClient | None = None,
 ) -> dict[str, Any]:
     """Run the first-pass integrity gate (S2 batch + AI judge prompts).
@@ -185,6 +187,15 @@ def integrity_check_tool(
     cfg = load_config()
     router = LLMRouter(cfg)
 
+    # Standalone originality mode — no LLM call, no host orchestration.
+    if mode == "originality":
+        result = run_integrity_check(
+            paths,
+            mode="originality",
+            originality_sample_rate=originality_sample_rate,
+        )
+        return result.to_dict()
+
     if router.is_host_orchestrated(INTEGRITY_NODE):
         partial = run_integrity_check(
             paths,
@@ -192,6 +203,8 @@ def integrity_check_tool(
             from_scratch=from_scratch,
             mandatory_modes=mandatory_list,
             s2_enabled=s2_enabled,
+            originality_enabled=originality_enabled,
+            originality_sample_rate=originality_sample_rate,
             inline_judge_fn=None,
         )
         directive = build_host_directive(
@@ -256,6 +269,8 @@ def integrity_check_tool(
         from_scratch=from_scratch,
         mandatory_modes=mandatory_list,
         s2_enabled=s2_enabled,
+        originality_enabled=originality_enabled,
+        originality_sample_rate=originality_sample_rate,
         inline_judge_fn=judge_fn,
     )
     out = partial.to_dict()

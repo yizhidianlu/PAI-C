@@ -21,6 +21,17 @@ from typing import Literal
 # Frequencies are population-level priors used to seed advisory severity.
 HALLUCINATION_KINDS: tuple[str, ...] = ("TF", "PAC", "IH", "PH", "SH")
 
+# ----------------------------------------------------- Originality (P3-1)
+
+# Verbatim / close-match / paraphrase kinds emitted by
+# :mod:`paic.integrity.originality`. Disjoint from HALLUCINATION_KINDS
+# and AI_FAILURE_MODE_KINDS so SKILL renderers can group by namespace.
+ORIGINALITY_KINDS: tuple[str, ...] = (
+    "ORIGINALITY_VERBATIM",
+    "ORIGINALITY_CLOSE_MATCH",
+    "ORIGINALITY_PARAPHRASE",
+)
+
 HALLUCINATION_LABELS: dict[str, str] = {
     "TF": "Total Fabrication — paper does not exist anywhere",
     "PAC": "Plausible Author/Conference — real authors never wrote this",

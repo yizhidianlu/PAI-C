@@ -10,6 +10,7 @@ allowed-tools: mcp__paic__paic_integrity_check, mcp__paic__paic_integrity_persis
 
 - **Stage 6 INTEGRITY-PRE** (`mode=pre_review`) — before peer review, after `/paic-draft compose` and `/paic-finalize` (structural gate). Runs 5-type citation hallucination check + 7-mode AI failure checklist.
 - **Stage 9 INTEGRITY-FINAL** (`mode=final_check`, `from_scratch=True`) — after revisions, before submission. Re-verifies every citation independently (cache invalidated). MUST PASS to advance to Stage 10 FINALIZE.
+- **Originality scan** (`mode=originality`, V1.1) — standalone plagiarism / paragraph-similarity audit via k-shingle Jaccard against `library/summaries` + `library/chunks`. Bypasses S2 + AI judge entirely. 100% paragraph coverage. Use for quick plagiarism-only audit (e.g. user copy-pasted prose from a draft they're not sure is original).
 - **Standalone** — `/paic-integrity` whenever the user wants a quick truthfulness audit on the current draft + library.
 
 ## Cost & latency awareness
@@ -39,12 +40,37 @@ Wait for user confirm before calling `mcp__paic__paic_integrity_check`.
 ```
 mcp__paic__paic_integrity_check(
     project_dir=<cwd>,
-    mode="pre_review",          # or "final_check"
+    mode="pre_review",          # or "final_check" / "originality"
     from_scratch=False,         # True at Stage 9 to re-verify cache
     mandatory_modes=[1, 3, 5, 6],  # default; pass [] for fully advisory
     s2_enabled=True,            # set False to skip S2 (everything → WebSearch)
+    originality_enabled=False,  # opt-in P3-1 paragraph-similarity scan
+                                 # (auxiliary check during pre_review/final_check;
+                                 #  bypassed in mode='originality' standalone path)
+    originality_sample_rate=None,  # None = mode default (30% pre / 50% final / 100% standalone)
 )
 ```
+
+### Originality-only short flow
+
+```
+mcp__paic__paic_integrity_check(
+    project_dir=<cwd>,
+    mode="originality",
+    originality_sample_rate=1.0,  # 100% paragraph coverage default
+)
+```
+
+Returns immediately (no S2, no LLM judge, no host orch). Each issue is a
+`{section, paragraph_idx, jaccard, matched_source}` finding:
+
+- `ORIGINALITY_VERBATIM` (severity=blocker) — jaccard ≥ 0.85
+- `ORIGINALITY_CLOSE_MATCH` (severity=major) — 0.65–0.85
+- `ORIGINALITY_PARAPHRASE` (severity=minor) — 0.40–0.65
+
+Heuristic only — not a substitute for Turnitin / iThenticate. Recommend
+running professional plagiarism software before submission for any paper
+where copy-paste risk is non-zero.
 
 **Two response shapes** depending on `routing.overrides.integrity_judge`:
 

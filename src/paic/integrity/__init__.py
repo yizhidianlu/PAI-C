@@ -15,6 +15,10 @@ truthfulness layers borrowed from `academic-research-skills` v3.7.0:
    advisory issues.
 """
 
+from paic.integrity.originality import (
+    ORIGINALITY_KINDS,
+    run_originality_check,
+)
 from paic.integrity.types import (
     AI_FAILURE_MODE_KINDS,
     AI_FAILURE_MODE_LABELS,
@@ -31,8 +35,10 @@ __all__ = [
     "AI_FAILURE_MODE_LABELS",
     "DEFAULT_MANDATORY_MODES",
     "HALLUCINATION_KINDS",
+    "ORIGINALITY_KINDS",
     "AIFailurePrompt",
     "IntegrityIssue",
     "IntegrityResult",
     "WebSearchPending",
+    "run_originality_check",
 ]

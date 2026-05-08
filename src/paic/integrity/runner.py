@@ -25,6 +25,7 @@ from paic.integrity.citation_check import (
     classify_websearch_results,
     verify_library_via_s2,
 )
+from paic.integrity.originality import run_originality_check
 from paic.integrity.types import (
     DEFAULT_MANDATORY_MODES,
     HALLUCINATION_KINDS,
@@ -50,6 +51,8 @@ def run_integrity_check(
     from_scratch: bool = False,
     mandatory_modes: Iterable[int] = DEFAULT_MANDATORY_MODES,
     s2_enabled: bool = True,
+    originality_enabled: bool = False,
+    originality_sample_rate: float | None = None,
     s2_search_fn=None,
     inline_judge_fn=None,
 ) -> IntegrityResult:
@@ -64,7 +67,17 @@ def run_integrity_check(
     (the dict shape :class:`_AIFailureJudgment` validates). When ``None``
     the AI prompts are returned in ``pending_ai_judge`` so the caller
     can dispatch them via host orchestration.
+
+    ``mode="originality"`` (P3-1) runs ONLY the originality scan
+    (skips citation S2 + AI failure modes). Useful for a quick
+    plagiarism-only check without paying the full integrity cost.
+    For ``mode in {"pre_review", "final_check"}``, originality is
+    opt-in via ``originality_enabled=True`` so existing pipelines
+    don't suddenly start surfacing paragraph-similarity findings.
     """
+    if mode == "originality":
+        return _run_originality_only(paths, sample_rate=originality_sample_rate)
+
     mandatory_list = list(mandatory_modes or DEFAULT_MANDATORY_MODES)
     cache = {} if from_scratch else _load_cache(paths)
 
@@ -103,6 +116,17 @@ def run_integrity_check(
         else:
             issues.extend(apply_judgments([judgment], mandatory_modes=mandatory_list))
 
+    if originality_enabled:
+        try:
+            originality_issues = run_originality_check(
+                paths,
+                mode=mode,
+                sample_rate=originality_sample_rate,
+            )
+            issues.extend(originality_issues)
+        except Exception as exc:  # noqa: BLE001 — never let originality break the gate
+            notes.append(f"originality scan failed: {exc!r}")
+
     _save_cache(paths, updated_cache)
 
     result = IntegrityResult(
@@ -118,6 +142,42 @@ def run_integrity_check(
         notes=notes,
     )
     return result
+
+
+def _run_originality_only(
+    paths: ProjectPaths,
+    *,
+    sample_rate: float | None,
+) -> IntegrityResult:
+    """Standalone originality scan — bypasses citation + AI judge.
+
+    ``mode="originality"`` is the only path that hits 100% paragraph
+    coverage by default; pre_review / final_check use the configured
+    sample rate via :func:`run_originality_check`.
+    """
+    notes: list[str] = []
+    issues: list[IntegrityIssue] = []
+    try:
+        issues = run_originality_check(
+            paths,
+            mode="originality",
+            sample_rate=sample_rate,
+        )
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"originality scan failed: {exc!r}")
+
+    return IntegrityResult(
+        passed=_compute_passed(issues, []),
+        mode="originality",
+        issues=issues,
+        mandatory_modes=[],
+        pending_websearch=[],
+        pending_ai_judge=[],
+        s2_verified_count=0,
+        s2_failed_count=0,
+        cache_hits=0,
+        notes=notes,
+    )
 
 
 def apply_persisted_results(

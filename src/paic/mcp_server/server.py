@@ -28,6 +28,7 @@ from paic.mcp_server.tools import pacing as pacing_tools
 from paic.mcp_server.tools import passport as passport_tools
 from paic.mcp_server.tools import pipeline as pipeline_tools
 from paic.mcp_server.tools import paper_plan as paper_plan_tools
+from paic.mcp_server.tools import process_summary as process_summary_tools
 from paic.mcp_server.tools import quality_gate as quality_gate_tools
 from paic.mcp_server.tools import related_work as related_work_tools
 from paic.mcp_server.tools import review as review_tools
@@ -727,6 +728,8 @@ def paic_integrity_check(
     from_scratch: bool = False,
     mandatory_modes: list[int] | None = None,
     s2_enabled: bool = True,
+    originality_enabled: bool = False,
+    originality_sample_rate: float | None = None,
 ) -> dict[str, Any]:
     """First-pass paper integrity gate — citation truthfulness + AI failure modes.
 
@@ -746,7 +749,18 @@ def paic_integrity_check(
     - ``final_check`` (Stage 9) — post-revision; pass ``from_scratch=True``
       to invalidate cache and verify all citations independently
       (ARS iron rule: Stage 4.5 verifies from scratch)
-    - ``originality`` (P3-1, future) — plagiarism / paragraph similarity
+    - ``originality`` (P3-1) — standalone plagiarism scan via k-shingle
+      Jaccard against ``library/summaries`` + ``library/chunks``;
+      bypasses S2 + AI judge entirely. 100% paragraph coverage by
+      default. Use for a quick plagiarism-only audit.
+
+    ``originality_enabled=True`` adds the originality scan as an
+    AUXILIARY check during ``pre_review`` / ``final_check`` (sample rate
+    30% / 50% per ARS spec). Default off — opt in when the user wants
+    paragraph-similarity findings alongside citation truthfulness.
+
+    ``originality_sample_rate`` (0.0-1.0): explicit override of the
+    default sample rate per mode.
 
     ``mandatory_modes`` defaults to ``[1, 3, 5, 6]`` per V1.0 design;
     pass ``[]`` for fully advisory mode (every issue advisory only).
@@ -762,6 +776,8 @@ def paic_integrity_check(
         from_scratch=from_scratch,
         mandatory_modes=mandatory_modes,
         s2_enabled=s2_enabled,
+        originality_enabled=originality_enabled,
+        originality_sample_rate=originality_sample_rate,
     )
 
 
@@ -1592,6 +1608,51 @@ def paic_draft_sync_overleaf(
         dry_run=dry_run,
         conflict_strategy=conflict_strategy,
         confirm_deletions=confirm_deletions,
+    )
+
+
+# --- Process Summary (ARS-fusion P3-2) -------------------------------------
+
+@mcp.tool()
+def paic_process_summary_generate(
+    project_dir: str,
+    write_to: str | None = None,
+    include_integrity: bool = True,
+) -> dict[str, Any]:
+    """Render the paper creation process record as markdown (ARS-fusion P3-2).
+
+    Reads ``pipeline.yaml`` (11-stage history) + ``passport.yaml``
+    (cross-session boundaries) + ``runs.yaml`` (LangGraph runs) +
+    ``state/integrity_report.yaml`` (latest integrity gate output).
+    Missing sources produce placeholder lines rather than hard errors —
+    even a project that never used /paic-pipeline yields a useful
+    runs+integrity summary.
+
+    The report covers:
+
+    1. Pipeline timeline (which stage, when, with what verdict)
+    2. Material Passport (cross-session boundaries + which are awaiting resume)
+    3. LangGraph runs (last 20)
+    4. Latest integrity report (severity breakdown + kind counts + notes)
+
+    Pure render — no LLM call, no host orchestration. Borrowed from ARS
+    Stage 6 PROCESS SUMMARY but markdown-only in V1.1 (LaTeX→PDF
+    deferred to V1.2).
+
+    ``write_to`` (optional, project-relative or absolute path): writes
+    rendered markdown to that file in addition to returning it.
+    Suggested: ``drafts/process_summary.md``.
+
+    ``include_integrity=True`` (default): include latest integrity
+    report. Set False for a tighter high-level overview without
+    per-citation findings.
+
+    Returns ``{ok, content, sections_present, project_dir, written_to?}``.
+    """
+    return process_summary_tools.process_summary_tool(
+        project_dir,
+        write_to=write_to,
+        include_integrity=include_integrity,
     )
 
 
