@@ -303,6 +303,12 @@ HOST_SUPPORTED_NODES: frozenset[str] = frozenset(
         "draft_compose",
         "figure_plan",
         "figure_prompt",
+        # ARS-fusion §integrity (P0-1) — bundles WebSearch + AI failure
+        # mode judgments through one host directive.
+        "integrity_judge",
+        # ARS-fusion §revision-coach (P0-2) — parses arbitrary external
+        # reviewer text into RevisionTask queue.
+        "revision_parse_external",
         # In-graph nodes — pause via ``llm_or_interrupt`` and resume on ``*_step``.
         "ideate_brainstorm",
         "idea_score_methodology",

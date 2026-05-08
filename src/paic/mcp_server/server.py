@@ -18,6 +18,7 @@ from paic.mcp_server.tools import draft as draft_tools
 from paic.mcp_server.tools import experiment as experiment_tools
 from paic.mcp_server.tools import figure as figure_tools
 from paic.mcp_server.tools import ideate as ideate_tools
+from paic.mcp_server.tools import integrity as integrity_tools
 from paic.mcp_server.tools import library as library_tools
 from paic.mcp_server.tools import library_retrieve as library_retrieve_tools
 from paic.mcp_server.tools import pacing as pacing_tools
@@ -576,6 +577,93 @@ def paic_quality_gate_run(
         compile_check=compile_check,
         overrides=overrides,
         strict=strict,
+    )
+
+
+# --- Integrity gate (ARS-fusion §P0-1) -------------------------------------
+
+@mcp.tool()
+def paic_integrity_check(
+    project_dir: str,
+    mode: str = "pre_review",
+    from_scratch: bool = False,
+    mandatory_modes: list[int] | None = None,
+    s2_enabled: bool = True,
+) -> dict[str, Any]:
+    """First-pass paper integrity gate — citation truthfulness + AI failure modes.
+
+    Complementary to ``paic_quality_gate_run`` (structural / 9 classes):
+    this gate covers **truthfulness** via two layers:
+
+    1. **Citation hallucination check (5-type taxonomy: TF/PAC/IH/PH/SH)**
+       — Semantic Scholar batch verify against ``selected.yaml``.
+       Surviving citations route to ``pending_websearch`` for the host
+       conversation to resolve via Claude's built-in WebSearch.
+    2. **AI Research Failure Mode Checklist (Lu 2026, 7 modes)** — LLM
+       judge over paper plan / claims / experiments. Per V1.0 design,
+       modes 1/3/5/6 are **mandatory blockers**, modes 2/4/7 advisory.
+
+    ``mode`` ∈ ``{"pre_review", "final_check", "originality"}``:
+    - ``pre_review`` (Stage 6) — first integrity gate before peer review
+    - ``final_check`` (Stage 9) — post-revision; pass ``from_scratch=True``
+      to invalidate cache and verify all citations independently
+      (ARS iron rule: Stage 4.5 verifies from scratch)
+    - ``originality`` (P3-1, future) — plagiarism / paragraph similarity
+
+    ``mandatory_modes`` defaults to ``[1, 3, 5, 6]`` per V1.0 design;
+    pass ``[]`` for fully advisory mode (every issue advisory only).
+
+    **Host orchestration mode** (``routing.overrides.integrity_judge: host``):
+    returns a host directive bundling ``pending_websearch`` + AI judge
+    prompts. Skill must run WebSearch + LLM judge per item, then call
+    ``paic_integrity_persist`` with the verdicts.
+    """
+    return integrity_tools.integrity_check_tool(
+        project_dir,
+        mode=mode,
+        from_scratch=from_scratch,
+        mandatory_modes=mandatory_modes,
+        s2_enabled=s2_enabled,
+    )
+
+
+@mcp.tool()
+def paic_integrity_persist(
+    project_dir: str,
+    mode: str = "pre_review",
+    web_search_results: list[dict[str, Any]] | None = None,
+    ai_judge_results: list[dict[str, Any]] | None = None,
+    structural_issues: list[dict[str, Any]] | None = None,
+    overrides: list[str] | None = None,
+    mandatory_modes: list[int] | None = None,
+) -> dict[str, Any]:
+    """Persist host-supplied integrity verdicts and finalize the report.
+
+    Companion to ``paic_integrity_check`` in host orchestration mode. The
+    Skill provides:
+
+    - ``web_search_results``: list of ``{cite_key, verdict, evidence_url[],
+      matched_*}`` per pending citation
+    - ``ai_judge_results``: list of ``{mode, status, reasoning, evidence[],
+      suggested_followup}`` per AI failure mode (1..7)
+    - ``structural_issues``: pre-WebSearch findings from
+      ``paic_integrity_check``'s directive metadata, passed through verbatim
+    - ``overrides``: list of issue ``kind`` values to suppress (blockers
+      cannot be overridden — see ``paic_quality_gate_run`` semantics)
+    - ``mandatory_modes``: same default ``[1, 3, 5, 6]``
+
+    Writes ``<project>/.paic/state/integrity_report.yaml`` and returns the
+    final :class:`IntegrityResult` (``passed`` is True iff no major /
+    blocker survived).
+    """
+    return integrity_tools.integrity_persist_tool(
+        project_dir,
+        mode=mode,
+        web_search_results=web_search_results,
+        ai_judge_results=ai_judge_results,
+        structural_issues=structural_issues,
+        overrides=overrides,
+        mandatory_modes=mandatory_modes,
     )
 
 
