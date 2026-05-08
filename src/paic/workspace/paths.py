@@ -150,6 +150,16 @@ class ProjectPaths:
         return self.state_dir / "runs.yaml"
 
     @property
+    def pipeline_yaml(self) -> Path:
+        """Pipeline orchestrator state (ARS-fusion P1-4).
+
+        Singleton yaml per project; tracks current 11-stage position,
+        consecutive-continue count, stage history. Created by the first
+        ``paic_pipeline_advance`` call.
+        """
+        return self.state_dir / "pipeline.yaml"
+
+    @property
     def passport_yaml(self) -> Path:
         """Material Passport ledger (ARS-fusion P1-2).
 

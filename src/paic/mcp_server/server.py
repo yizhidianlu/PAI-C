@@ -25,6 +25,7 @@ from paic.mcp_server.tools import library as library_tools
 from paic.mcp_server.tools import library_retrieve as library_retrieve_tools
 from paic.mcp_server.tools import pacing as pacing_tools
 from paic.mcp_server.tools import passport as passport_tools
+from paic.mcp_server.tools import pipeline as pipeline_tools
 from paic.mcp_server.tools import paper_plan as paper_plan_tools
 from paic.mcp_server.tools import quality_gate as quality_gate_tools
 from paic.mcp_server.tools import related_work as related_work_tools
@@ -1534,6 +1535,78 @@ def paic_draft_sync_overleaf(
         dry_run=dry_run,
         conflict_strategy=conflict_strategy,
         confirm_deletions=confirm_deletions,
+    )
+
+
+# --- Pipeline Orchestrator (ARS-fusion P1-4) -------------------------------
+
+@mcp.tool()
+def paic_pipeline_state(project_dir: str) -> dict[str, Any]:
+    """Read-only snapshot of the 11-stage pipeline orchestrator state.
+
+    Returns ``{exists, project_dir, state_path, state?,
+    current_stage_label, mandatory_stages, stage_labels}``. ``state``
+    is the deserialized PipelineState; absent when no pipeline run has
+    been started for this project.
+
+    Use to render the current pipeline position in /paic-status, or to
+    decide what the next paic_pipeline_advance call should target.
+
+    Stage map:
+    - 0 INIT         · 1 SEARCH+INGEST · 2 IDEATE      · 3 EXPERIMENT
+    - 4 PLAN         · 5 DRAFT         · 6 INTEGRITY-PRE (MANDATORY)
+    - 7 REVIEW       · 8 REVISE        · 9 INTEGRITY-FINAL (MANDATORY)
+    - 10 FINALIZE    (MANDATORY)
+
+    MANDATORY checkpoints cannot be auto-skipped — explicit user input
+    is required even when prior stage looks perfect.
+    """
+    return pipeline_tools.pipeline_state_tool(project_dir)
+
+
+@mcp.tool()
+def paic_pipeline_advance(
+    project_dir: str,
+    to_stage: int,
+    checkpoint_kind: str = "FULL",
+    verdict: str | None = None,
+    deliverables: list[str] | None = None,
+    notes: str | None = None,
+    passport_hash: str | None = None,
+    mode: str | None = None,
+    consecutive_continue: bool = False,
+) -> dict[str, Any]:
+    """Advance the pipeline to ``to_stage`` and record the transition.
+
+    Called by the pipeline_orchestrator agent at every stage transition.
+    Behaviour:
+
+    - First call bootstraps state at ``to_stage`` with mode locked.
+    - Auto-promotes ``checkpoint_kind`` to ``MANDATORY`` for stages 6 /
+      9 / 10 (cannot be bypassed by passing ``"FULL"``).
+    - Resets ``consecutive_continues`` on FULL / MANDATORY; increments
+      on SLIM. When the count reaches 4, next checkpoint is forced
+      back to FULL regardless of caller intent (awareness guard).
+    - Appends one StageHistoryEntry per call (append-only audit trail).
+
+    ``passport_hash`` (optional): when the orchestrator emitted a
+    Material Passport boundary at this transition, pass the 12-char
+    hash so future ``paic_pipeline_state`` calls can advertise the
+    resume command.
+
+    ``consecutive_continue=True``: pass when the user explicitly said
+    "just continue" at the prior checkpoint — drives the SLIM downgrade.
+    """
+    return pipeline_tools.pipeline_advance_tool(
+        project_dir,
+        to_stage=to_stage,
+        checkpoint_kind=checkpoint_kind,
+        verdict=verdict,
+        deliverables=deliverables,
+        notes=notes,
+        passport_hash=passport_hash,
+        mode=mode,
+        consecutive_continue=consecutive_continue,
     )
 
 
